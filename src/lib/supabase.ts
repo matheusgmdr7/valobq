@@ -237,3 +237,8 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOi
 
 // Client sempre criado - sem condicionais que podem falhar em builds de produção
 export const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseAnonKey);
+
+// Debug temporário - expor para testes no console
+if (typeof window !== 'undefined') {
+  (window as any).__supabase = supabase;
+}
