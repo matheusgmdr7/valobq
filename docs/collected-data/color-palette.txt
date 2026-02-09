@@ -1,0 +1,22 @@
+COLOR PALETTE COLETADA:
+- rgb(0, 0, 0) - Preto
+- rgb(46, 56, 81) - Azul escuro/cinza
+- rgb(255, 255, 255) - Branco
+- rgb(118, 118, 118) - Cinza médio
+
+FONTES COLETADAS:
+- Times
+- platformdefault, sans-serif
+
+ELEMENTOS PRINCIPAIS:
+- Canvas: id="glcanvas" class="topleft svelte-dpf2o4 active"
+- Input: id="input" type="text"
+- Dimensões do canvas: 952x1188 (display: 476x594)
+- Body: position: fixed, height: 100%, width: 100%
+
+TECNOLOGIAS IDENTIFICADAS:
+- WebGL Engine: glengineeb433f38.js
+- Svelte framework
+- WebFont loader
+- Google Tag Manager
+- Facebook Pixel

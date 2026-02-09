@@ -1,26 +1,355 @@
-@import "tailwindcss";
+@tailwind base;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Custom scrollbar para o seletor de timeframe - Mais discreta */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(17, 24, 39, 0.3);
+  border-radius: 3px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(75, 85, 99, 0.5);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 114, 128, 0.7);
+}
+
+/* Para Firefox - Mais discreta */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(75, 85, 99, 0.5) rgba(17, 24, 39, 0.3);
+}
+
+/* Scroll discreto para páginas claras (como withdrawal) */
+.discreet-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.discreet-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.discreet-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(209, 213, 219, 0.5);
+  border-radius: 3px;
+}
+
+.discreet-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.7);
+}
+
+/* Para Firefox - Scroll discreto */
+.discreet-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(209, 213, 219, 0.5) transparent;
+}
+
+/* Animação discreta para toasts */
+@keyframes toast-slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
   }
 }
 
+@keyframes toast-slide-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* Animações para toasts customizados de resultado de trade */
+@keyframes toast-progress {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+.animate-enter {
+  animation: toast-custom-enter 0.35s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
+}
+
+.animate-leave {
+  animation: toast-custom-leave 0.3s cubic-bezier(0.06, 0.71, 0.55, 1) forwards;
+}
+
+@keyframes toast-custom-enter {
+  0% {
+    transform: translateX(120%) scale(0.9);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-custom-leave {
+  0% {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(120%) scale(0.9);
+    opacity: 0;
+  }
+}
+
+/* Estilos customizados para toasts */
+[data-sonner-toast] {
+  animation: toast-slide-in 0.3s ease-out !important;
+  background: #111827 !important;
+  color: #fff !important;
+  border: 1px solid #ffffff !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-sonner-toast][data-styled="true"] {
+  animation: toast-slide-out 0.2s ease-in forwards !important;
+}
+
+/* Animação fade-in para dropdown */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Animações para barra de sentimento dos traders - Efeito líquido */
+@keyframes liquid-wave {
+  0%, 100% {
+    transform: translateY(0) scaleY(1);
+    border-radius: 2px;
+  }
+  25% {
+    transform: translateY(-1px) scaleY(1.01);
+    border-radius: 3px 3px 1px 1px;
+  }
+  50% {
+    transform: translateY(0) scaleY(1);
+    border-radius: 2px;
+  }
+  75% {
+    transform: translateY(1px) scaleY(0.99);
+    border-radius: 1px 1px 3px 3px;
+  }
+}
+
+@keyframes liquid-mix {
+  0%, 100% {
+    opacity: 0.7;
+    transform: translateY(0) scaleY(1);
+    filter: blur(2px);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(-2px) scaleY(1.1);
+    filter: blur(3px);
+  }
+}
+
+@keyframes liquid-surface {
+  0%, 100% {
+    clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
+    opacity: 0.6;
+  }
+  25% {
+    clip-path: polygon(0% 5%, 100% 0%, 95% 100%, 5% 100%);
+    opacity: 0.7;
+  }
+  50% {
+    clip-path: polygon(5% 0%, 95% 0%, 100% 100%, 0% 100%);
+    opacity: 0.6;
+  }
+  75% {
+    clip-path: polygon(0% 0%, 100% 5%, 95% 100%, 0% 95%);
+    opacity: 0.7;
+  }
+}
+
+@keyframes surface-glow {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scaleX(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scaleX(1.3);
+  }
+}
+@tailwind components;
+@tailwind utilities;
+
+/* ========== Landing Page Animations ========== */
+
+/* Marquee horizontal infinito */
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 30s linear infinite;
+}
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Rotação do anel do badge (conic-gradient border) */
+@keyframes spin-slow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+  animation: spin-slow 4s linear infinite;
+}
+
+/* Floating glow suave de fundo */
+@keyframes float-glow {
+  0% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(60px, -40px) scale(1.08); }
+  50% { transform: translate(-20px, 30px) scale(1.02); }
+  75% { transform: translate(-50px, -20px) scale(1.1); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+.animate-float-glow {
+  animation: float-glow 18s ease-in-out infinite;
+}
+.animate-float-glow-delay {
+  animation: float-glow 22s ease-in-out infinite;
+  animation-delay: -7s;
+}
+
+/* Reset CSS - Similar à Polarium */
+* {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+html {
+  height: 100vh;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* VALOREN - Plataforma de Trading - Estilo Global */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 100%;
+  min-height: 100vh;
+  font-family: 'Inter', 'Roboto', 'platformdefault', sans-serif;
+  background-color: #2e3851;
+  color: #ffffff;
+}
+
+a {
+  text-decoration: none;
+}
+
+/* Canvas WebGL - Similar à Polarium */
+#glcanvas,
+canvas[id*="glcanvas"],
+.chart-canvas-container canvas {
+  margin: 0;
+  padding: 0;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #2e3851;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #767676;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Remover setas de input number */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+  display: none;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Mobile safe area padding */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Mobile trading - hide scrollbars on asset tabs */
+@media (max-width: 767px) {
+  .overflow-x-auto::-webkit-scrollbar {
+    display: none;
+  }
+  .overflow-x-auto {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Mobile Trading - Safe Area */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Mobile - Esconder scrollbar na top bar */
+@media (max-width: 767px) {
+  .overflow-x-auto::-webkit-scrollbar {
+    display: none;
+  }
+  .overflow-x-auto {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Mobile Landscape - Maximizar espaço do gráfico */
+@media (max-width: 767px) and (orientation: landscape) {
+  .mobile-landscape-compact {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
 }

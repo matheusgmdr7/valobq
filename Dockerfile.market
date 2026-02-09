@@ -1,0 +1,28 @@
+# Dockerfile para MarketDataServer
+FROM node:20-alpine AS base
+
+WORKDIR /app
+
+# Instalar dependências
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev
+
+# Copiar código fonte necessário
+COPY src/server/ ./src/server/
+COPY src/services/ ./src/services/
+COPY src/engine/otcEngine.ts ./src/engine/otcEngine.ts
+COPY src/utils/marketHours.ts ./src/utils/marketHours.ts
+COPY src/types/ ./src/types/
+COPY tsconfig.json ./
+
+# Instalar tsx para executar TypeScript
+RUN npm install -g tsx
+
+ENV NODE_ENV=production
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD node -e "const ws=new(require('ws'))('ws://localhost:8080');ws.on('open',()=>{ws.close();process.exit(0)});ws.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)"
+
+CMD ["tsx", "src/server/MarketDataServer.ts"]

@@ -1,0 +1,45 @@
+<html class="macos desktop wf-platformdefault-n4-active wf-robotobold-n4-active wf-robotothin-n4-active wf-active portrait">
+<head>
+<style>
+body {transition: opacity ease-in 0.2s; } 
+body[unresolved] {opacity: 0; display: block; overflow: hidden; position: relative; } 
+</style>
+    <!-- Google Tag Manager -->
+    <script src="https://connect.facebook.net/signals/config/1509917339990768?v=2.9.237&amp;r=stable&amp;domain=trade.polariumbroker.com&amp;hme=0e765f8c1c15e34523a2a1dcfb1e6658bdc64adfdb8a2b463c34752b789aa615&amp;ex_m=90%2C152%2C132%2C19%2C66%2C67%2C125%2C62%2C42%2C126%2C71%2C61%2C139%2C79%2C13%2C89%2C27%2C120%2C111%2C69%2C72%2C119%2C136%2C98%2C141%2C7%2C3%2C4%2C6%2C5%2C2%2C80%2C88%2C142%2C219%2C163%2C56%2C224%2C221%2C222%2C49%2C178%2C26%2C68%2C228%2C227%2C166%2C29%2C55%2C8%2C58%2C84%2C85%2C86%2C91%2C115%2C28%2C25%2C118%2C114%2C113%2C133%2C70%2C135%2C134%2C44%2C116%2C54%2C108%2C12%2C138%2C39%2C208%2C210%2C173%2C22%2C23%2C24%2C16%2C17%2C38%2C34%2C36%2C35%2C75%2C81%2C83%2C96%2C124%2C127%2C40%2C97%2C20%2C18%2C102%2C63%2C32%2C129%2C128%2C130%2C121%2C21%2C31%2C53%2C95%2C137%2C64%2C15%2C131%2C30%2C188%2C159%2C270%2C206%2C150%2C191%2C184%2C160%2C93%2C117%2C74%2C106%2C48%2C41%2C104%2C105%2C110%2C52%2C14%2C112%2C103%2C59%2C43%2C99%2C47%2C50%2C46%2C87%2C140%2C0%2C109%2C11%2C107%2C9%2C1%2C51%2C82%2C57%2C60%2C101%2C78%2C77%2C45%2C122%2C76%2C73%2C65%2C100%2C92%2C37%2C123%2C33%2C94%2C10%2C143%2C234%2C233%2C235%2C240%2C241%2C242%2C238%2C230%2C165%2C167%2C214%2C204%2C229%2C231%2C272%2C207%2C225%2C153%2C198%2C180%2C256%2C199%2C260%2C258%2C261%2C259%2C218%2C171%2C161%2C269%2C147%2C158%2C169%2C154%2C186%2C220%2C144%2C200%2C248%2C146%2C174%2C196" async=""></script>
+    <!-- ... outros scripts ... -->
+    <meta http-equiv="expires" content="0">
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>PolariumBroker</title>
+    <meta name="description" content="">
+    <link rel="manifest" href="/traderoom/manifest.json">
+    <link rel="preload" href="/traderoom/saas.svg" as="image">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="PolariumBroker">
+    <meta name="apple-mobile-web-app-title" content="PolariumBroker">
+    <meta name="msapplication-starturl" content="/traderoom/">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <!-- ... outros links ... -->
+    <link crossorigin="use-credentials" href="/traderoom/style.css?v=1754397635" rel="stylesheet">
+    <link crossorigin="use-credentials" href="/traderoom/bundle.css?v=1754397635" rel="stylesheet">
+    <script crossorigin="use-credentials" src="/traderoom/webfont.js?v=1754397635" type="text/javascript"></script>
+    <script crossorigin="use-credentials" src="/traderoom/bundle.js?v=1754397635" type="text/javascript"></script>
+    <link rel="preload" as="fetch" href="/traderoom/glengineeb433f38.data?v=1754397635" crossorigin="anonymous">
+    <link rel="preload" as="fetch" href="/traderoom/glengineeb433f38.wasm?v=1754397635" crossorigin="anonymous">
+    <link rel="preload" as="script" href="/traderoom/glengineeb433f38.js?v=1754397635" crossorigin="use-credentials">
+</head>
+<body style="margin: 0; padding: 0; position: fixed; height: 100%; width: 100%;">
+    <!-- Google Tag Manager (noscript) -->
+    <noscript>
+        <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-NHVFKN5R"
+            height="0" width="0" style="display:none;visibility:hidden">
+        </iframe>
+    </noscript>
+    <!-- End Google Tag Manager (noscript) -->
+    
+    <canvas class="topleft svelte-dpf2o4 active" id="glcanvas" tabindex="1" width="952" height="1188" style="cursor: default; width: 476px; height: 594px;"></canvas> 
+    <input type="text" id="input">     
+    <script crossorigin="use-credentials" src="/traderoom/glengineeb433f38.js?v=1754397635"></script>
+</body>
+</html>
