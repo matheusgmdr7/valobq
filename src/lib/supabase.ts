@@ -237,3 +237,15 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOi
 
 // Client sempre criado - sem condicionais que podem falhar em builds de produção
 export const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseAnonKey);
+
+// Debug temporário - verificar se o client é criado
+if (typeof window !== 'undefined') {
+  console.log('[SUPABASE_DEBUG] Client criado:', !!supabase);
+  console.log('[SUPABASE_DEBUG] URL:', supabaseUrl);
+  console.log('[SUPABASE_DEBUG] Key presente:', !!supabaseAnonKey);
+  // Teste direto
+  supabase.from('platform_settings').select('key').limit(1).then(
+    (res) => console.log('[SUPABASE_DEBUG] Query teste:', res.data, res.error),
+    (err) => console.error('[SUPABASE_DEBUG] Query falhou:', err)
+  );
+}
