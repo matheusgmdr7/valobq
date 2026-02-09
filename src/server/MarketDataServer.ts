@@ -1317,7 +1317,7 @@ async function fetchLastPriceForOTC(symbol: string, category: string): Promise<n
  * Inicia o servidor WebSocket
  */
 function startServer(): void {
-  const wss = new WebSocket.Server({ port: WS_PORT });
+  const wss = new WebSocket.Server({ port: WS_PORT, host: '0.0.0.0' });
   
   console.log('[MarketDataServer] Started on port', WS_PORT);
 
