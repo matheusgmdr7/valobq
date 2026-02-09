@@ -235,19 +235,5 @@ export type Database = {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://tgrhgkqpqsnkhewnmarr.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRncmhna3FwcXNua2hld25tYXJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMzI3MzEsImV4cCI6MjA4MzkwODczMX0.Am-rYaY9wiIBbXAirbkZj0gau5kxR_Dx2QiMrQC2xns';
 
-// Client sempre criado - com configuração robusta para evitar travamentos
-export const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
-    // Desabilitar navigator.locks que pode travar em alguns navegadores
-    lock: 'no-op' as any,
-    // Timeout de 5s para operações de storage
-    storageKey: 'valoren-auth',
-  },
-  global: {
-    // Usar fetch global explicitamente (evita problemas com SES/lockdown)
-    fetch: (...args: Parameters<typeof fetch>) => fetch(...args),
-  },
-});
+// Client sempre criado - sem condicionais que podem falhar em builds de produção
+export const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseAnonKey);
