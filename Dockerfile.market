@@ -11,8 +11,9 @@ RUN npm ci --omit=dev
 COPY src/server/ ./src/server/
 COPY src/services/ ./src/services/
 COPY src/engine/otcEngine.ts ./src/engine/otcEngine.ts
-COPY src/utils/marketHours.ts ./src/utils/marketHours.ts
+COPY src/utils/ ./src/utils/
 COPY src/types/ ./src/types/
+COPY src/lib/ ./src/lib/
 COPY tsconfig.json ./
 
 # Instalar tsx para executar TypeScript
