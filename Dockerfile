@@ -13,12 +13,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build WASM (opcional - pode ser pré-compilado)
-# RUN npm run build:wasm || true
-
-# Build Next.js
+# Build Next.js (pular build WASM - usa fallback JS para indicadores)
 ENV NEXT_TELEMETRY_DISABLED 1
-RUN npm run build
+RUN npm run build:wasm || true && npx next build
 
 # Imagem de produção, copiar todos os arquivos e executar next
 FROM base AS runner
