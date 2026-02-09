@@ -235,10 +235,12 @@ export type Database = {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://tgrhgkqpqsnkhewnmarr.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRncmhna3FwcXNua2hld25tYXJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMzI3MzEsImV4cCI6MjA4MzkwODczMX0.Am-rYaY9wiIBbXAirbkZj0gau5kxR_Dx2QiMrQC2xns';
 
-// Client sempre criado - sem condicionais que podem falhar em builds de produção
-export const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseAnonKey);
-
-// Debug temporário - expor para testes no console
-if (typeof window !== 'undefined') {
-  (window as any).__supabase = supabase;
-}
+// Client sempre criado - com lock customizado para evitar travamento do navigator.locks
+export const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    // Substituir navigator.locks por execução direta (evita travamento intermitente)
+    lock: async (name: string, acquireTimeout: number, fn: () => Promise<any>) => {
+      return await fn();
+    },
+  },
+});
