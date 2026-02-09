@@ -4,16 +4,7 @@
  * Configuração e inicialização do cliente Supabase
  */
 
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-// Supabase config loaded from environment
-
-export const supabase = supabaseUrl && supabaseAnonKey
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : null;
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Tipos para Supabase (gerados automaticamente em produção)
 export type Database = {
@@ -177,8 +168,72 @@ export type Database = {
           updated_at?: string;
         };
       };
+      platform_settings: {
+        Row: {
+          id: string;
+          key: string;
+          value: string;
+          description: string | null;
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          key: string;
+          value: string;
+          description?: string | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          key?: string;
+          value?: string;
+          description?: string | null;
+          updated_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      payment_gateways: {
+        Row: {
+          id: string;
+          name: string;
+          type: string;
+          is_active: boolean;
+          config: any;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          type: string;
+          is_active?: boolean;
+          config?: any;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          type?: string;
+          is_active?: boolean;
+          config?: any;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
     };
   };
 };
 
+// Valores públicos (anon key é projetada para ser exposta no client-side)
+// A segurança real vem das Row Level Security (RLS) policies no Supabase
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://tgrhgkqpqsnkhewnmarr.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRncmhna3FwcXNua2hld25tYXJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMzI3MzEsImV4cCI6MjA4MzkwODczMX0.Am-rYaY9wiIBbXAirbkZj0gau5kxR_Dx2QiMrQC2xns';
 
+// Client sempre criado - sem condicionais que podem falhar em builds de produção
+export const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseAnonKey);
