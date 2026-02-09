@@ -101,7 +101,7 @@ export default function NewsAdminPage() {
               }
             }
           } else {
-            toast.info('Nenhuma notícia nova encontrada. Todas as notícias já estão sincronizadas.');
+            toast('Nenhuma notícia nova encontrada. Todas as notícias já estão sincronizadas.', { icon: 'ℹ️' });
           }
         }
       } else {

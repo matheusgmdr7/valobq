@@ -112,7 +112,7 @@ export default function CalendarAdminPage() {
               }
             }
           } else {
-            toast.info('Nenhum evento novo encontrado. Todos os eventos já estão sincronizados.');
+            toast('Nenhum evento novo encontrado. Todos os eventos já estão sincronizados.', { icon: 'ℹ️' });
           }
         }
       } else {

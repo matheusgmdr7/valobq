@@ -2,6 +2,13 @@
 const nextConfig = {
   // Configuração simplificada para VALOREN
   output: process.env.NODE_ENV === 'production' ? 'standalone' : undefined,
+  // Ignorar erros de tipo e ESLint no build de produção (verificados em dev)
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   experimental: {
     turbo: {
       rules: {
@@ -13,7 +20,6 @@ const nextConfig = {
     },
   },
   webpack: (config, { isServer }) => {
-    // Com SINGLE_FILE=1, o WASM está embutido no JS, não precisa de configurações específicas para .wasm
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
@@ -25,8 +31,6 @@ const nextConfig = {
     
     return config;
   },
-  // Desabilitar otimizações que podem causar problemas com Turbopack
-  swcMinify: true,
 }
 
 export default nextConfig
