@@ -13,6 +13,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Variáveis NEXT_PUBLIC_* precisam estar disponíveis no build
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_MARKET_DATA_WS_URL
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_MARKET_DATA_WS_URL=$NEXT_PUBLIC_MARKET_DATA_WS_URL
+
 # Build Next.js (pular build WASM - usa fallback JS para indicadores)
 ENV NEXT_TELEMETRY_DISABLED 1
 RUN npm run build:wasm || true && npx next build
