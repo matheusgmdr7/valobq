@@ -7,29 +7,19 @@
 import { supabase } from './supabase';
 import { logger } from '@/utils/logger';
 
-// Configuração do Supabase (quando disponível)
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
 export interface DatabaseConfig {
   type: 'supabase' | 'local' | 'none';
-  url?: string;
-  key?: string;
 }
 
 export function getDatabaseConfig(): DatabaseConfig {
-  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
-    return {
-      type: 'supabase',
-      url: SUPABASE_URL,
-      key: SUPABASE_ANON_KEY,
-    };
+  // Usar o client Supabase importado diretamente para determinar o modo
+  // (evita problemas de inlining de process.env em builds de produção)
+  if (supabase) {
+    return { type: 'supabase' };
   }
 
-  // Modo local (localStorage) para desenvolvimento
-  return {
-    type: 'local',
-  };
+  // Modo local (localStorage) para desenvolvimento sem Supabase
+  return { type: 'local' };
 }
 
 export const dbConfig = getDatabaseConfig();
