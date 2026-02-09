@@ -138,19 +138,31 @@ let redisClient: RedisClientType | null = null;
  */
 async function initRedis(): Promise<void> {
   try {
-    redisClient = createClient({ url: REDIS_URL });
-    
-    redisClient.on('error', (err) => {
-      if (!redisClient) {
-        console.error('[Redis] Erro:', err.message);
+    redisClient = createClient({
+      url: REDIS_URL,
+      socket: {
+        connectTimeout: 5000,
+        reconnectStrategy: (retries) => {
+          if (retries > 2) return false; // Desistir após 2 tentativas
+          return Math.min(retries * 500, 2000);
+        }
       }
+    });
+    
+    redisClient.on('error', () => {
+      // Silenciar erros de conexão Redis (modo degradado)
     });
     
     redisClient.on('connect', () => {});
     
-    await redisClient.connect();
+    // Timeout de 5s para conexão Redis
+    const connectPromise = redisClient.connect();
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Redis timeout')), 5000)
+    );
+    await Promise.race([connectPromise, timeoutPromise]);
   } catch {
-    redisClient = null; // Modo degradado
+    redisClient = null; // Modo degradado: continuar sem Redis
   }
 }
 
