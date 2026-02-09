@@ -47,7 +47,8 @@ export default function BrokerDataPage() {
           logo: savedLogo,
           logoDark: savedLogoDark,
           logoLight: savedLogoLight,
-          favicon: savedFavicon
+          favicon: savedFavicon,
+          watermark: localStorage.getItem('broker_watermark') || null
         });
         setLoading(false);
         return;
