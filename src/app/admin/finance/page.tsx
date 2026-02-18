@@ -1,10 +1,32 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { DollarSign, TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, AlertCircle, X, User, Eye, Send, Check } from 'lucide-react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { 
+  DollarSign, TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, 
+  AlertCircle, X, User, Eye, Send, Check, RefreshCw, ChevronDown,
+  ArrowDownRight, ArrowUpRight, Filter, Search
+} from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+
+type PeriodFilter = '7d' | '15d' | '30d' | '90d' | 'all';
+
+const PERIOD_LABELS: Record<PeriodFilter, string> = {
+  '7d': '7 dias',
+  '15d': '15 dias',
+  '30d': '30 dias',
+  '90d': '90 dias',
+  'all': 'Todo período',
+};
+
+function getDateFrom(period: PeriodFilter): string | null {
+  if (period === 'all') return null;
+  const days = parseInt(period);
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString();
+}
 
 interface Deposit {
   id: string;
@@ -15,6 +37,7 @@ interface Deposit {
   created_at: string;
   transaction_id?: string;
   admin_notes?: string;
+  user_name?: string;
 }
 
 interface Withdrawal {
@@ -26,91 +49,116 @@ interface Withdrawal {
   created_at: string;
   transaction_id?: string;
   admin_notes?: string;
+  user_name?: string;
+  first_name?: string;
+  last_name?: string;
+  pix_key?: string;
+  cpf?: string;
 }
 
 export default function FinancePage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'deposits' | 'withdrawals'>('deposits');
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState<'deposits' | 'withdrawals'>(() => {
+    return (searchParams.get('tab') as 'deposits' | 'withdrawals') || 'deposits';
+  });
   const [deposits, setDeposits] = useState<Deposit[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({
-    status: 'all',
-    method: 'all',
-    dateFrom: '',
-    dateTo: ''
+  const [period, setPeriod] = useState<PeriodFilter>('30d');
+  const [showPeriodMenu, setShowPeriodMenu] = useState(false);
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || 'all');
+  const [methodFilter, setMethodFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const [summaryStats, setSummaryStats] = useState({
+    totalDeposits: 0,
+    totalWithdrawals: 0,
+    depositCount: 0,
+    withdrawalCount: 0,
+    pendingDeposits: 0,
+    pendingWithdrawals: 0,
   });
+
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const [selectedWithdrawal, setSelectedWithdrawal] = useState<Withdrawal | null>(null);
   const [userInfo, setUserInfo] = useState<any>(null);
-  const [userStats, setUserStats] = useState({
-    depositsCount: 0,
-    withdrawalsCount: 0,
-    totalDeposits: 0,
-    totalWithdrawals: 0
-  });
+  const [userStats, setUserStats] = useState({ depositsCount: 0, withdrawalsCount: 0, totalDeposits: 0, totalWithdrawals: 0 });
   const [transferMethod, setTransferMethod] = useState<'api' | 'manual'>('api');
   const [transactionId, setTransactionId] = useState('');
+  const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
-    loadData();
-  }, [activeTab, filters]);
+    const loadUserNames = async () => {
+      if (!supabase) return;
+      try {
+        const { data: users } = await supabase.from('users').select('id, name, email');
+        if (users) {
+          const map = new Map<string, string>();
+          users.forEach((u: any) => map.set(u.id, u.name || u.email || u.id.slice(0, 8)));
+          setUserNames(map);
+        }
+      } catch { /* ignore */ }
+    };
+    loadUserNames();
+  }, []);
+
+  useEffect(() => { loadSummary(); }, [period]);
+  useEffect(() => { loadData(); }, [activeTab, statusFilter, methodFilter, period, userNames]);
+
+  const loadSummary = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      const dateFrom = getDateFrom(period);
+
+      let dq = supabase.from('deposits').select('amount').eq('status', 'approved');
+      if (dateFrom) dq = dq.gte('created_at', dateFrom);
+      const { data: dd } = await dq;
+
+      let wq = supabase.from('withdrawal_requests').select('amount').in('status', ['approved', 'completed']);
+      if (dateFrom) wq = wq.gte('created_at', dateFrom);
+      const { data: wd } = await wq;
+
+      const { count: pd } = await supabase.from('deposits').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+      const { count: pw } = await supabase.from('withdrawal_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+
+      setSummaryStats({
+        totalDeposits: dd?.reduce((s, d) => s + parseFloat(d.amount?.toString() || '0'), 0) || 0,
+        totalWithdrawals: wd?.reduce((s, w) => s + parseFloat(w.amount?.toString() || '0'), 0) || 0,
+        depositCount: dd?.length || 0,
+        withdrawalCount: wd?.length || 0,
+        pendingDeposits: pd || 0,
+        pendingWithdrawals: pw || 0,
+      });
+    } catch (error) {
+      console.error('Erro ao carregar resumo:', error);
+    }
+  }, [period]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      if (!supabase) {
-        setDeposits([]);
-        setWithdrawals([]);
-        return;
-      }
+      if (!supabase) { setDeposits([]); setWithdrawals([]); return; }
+      const dateFrom = getDateFrom(period);
 
       if (activeTab === 'deposits') {
-        let query = supabase
-          .from('deposits')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100);
-
-        if (filters.status !== 'all') {
-          query = query.eq('status', filters.status);
-        }
-        if (filters.method !== 'all') {
-          query = query.eq('method', filters.method);
-        }
-        if (filters.dateFrom) {
-          query = query.gte('created_at', filters.dateFrom);
-        }
-        if (filters.dateTo) {
-          query = query.lte('created_at', filters.dateTo);
-        }
+        let query = supabase.from('deposits').select('*').order('created_at', { ascending: false }).limit(200);
+        if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+        if (methodFilter !== 'all') query = query.eq('method', methodFilter);
+        if (dateFrom) query = query.gte('created_at', dateFrom);
 
         const { data, error } = await query;
         if (error) throw error;
-        setDeposits(data || []);
+        setDeposits((data || []).map((d: any) => ({ ...d, user_name: userNames.get(d.user_id) || d.user_id?.slice(0, 8) })));
       } else {
-        let query = supabase
-          .from('withdrawal_requests')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100);
-
-        if (filters.status !== 'all') {
-          query = query.eq('status', filters.status);
-        }
-        if (filters.method !== 'all') {
-          query = query.eq('method', filters.method);
-        }
-        if (filters.dateFrom) {
-          query = query.gte('created_at', filters.dateFrom);
-        }
-        if (filters.dateTo) {
-          query = query.lte('created_at', filters.dateTo);
-        }
+        let query = supabase.from('withdrawal_requests').select('*').order('created_at', { ascending: false }).limit(200);
+        if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+        if (methodFilter !== 'all') query = query.eq('method', methodFilter);
+        if (dateFrom) query = query.gte('created_at', dateFrom);
 
         const { data, error } = await query;
         if (error) throw error;
-        setWithdrawals(data || []);
+        setWithdrawals((data || []).map((w: any) => ({ ...w, user_name: userNames.get(w.user_id) || w.first_name ? `${w.first_name} ${w.last_name || ''}`.trim() : w.user_id?.slice(0, 8) })));
       }
     } catch (error: any) {
       console.error('Erro ao carregar dados:', error);
@@ -122,706 +170,415 @@ export default function FinancePage() {
 
   const handleApprove = async (id: string, type: 'deposit' | 'withdrawal') => {
     try {
-      if (!supabase) {
-        toast.error('Banco de dados não configurado');
-        return;
-      }
-
+      if (!supabase) { toast.error('Banco de dados não configurado'); return; }
       if (type === 'withdrawal') {
-        // Buscar a solicitação de retirada
-        const { data: request, error: fetchError } = await supabase
-          .from('withdrawal_requests')
-          .select('*')
-          .eq('id', id)
-          .single();
-
+        const { data: request, error: fetchError } = await supabase.from('withdrawal_requests').select('*').eq('id', id).single();
         if (fetchError) throw fetchError;
-        if (!request) {
-          toast.error('Solicitação não encontrada');
-          return;
-        }
-
-        // Buscar usuário atual para obter admin_id (se necessário)
+        if (!request) { toast.error('Solicitação não encontrada'); return; }
         const savedUserStr = typeof window !== 'undefined' ? localStorage.getItem('user_data') : null;
         const adminId = savedUserStr ? JSON.parse(savedUserStr).id : null;
-
-        // Atualizar status da solicitação
-        const { error: updateError } = await supabase
-          .from('withdrawal_requests')
-          .update({ 
-            status: 'approved',
-            processed_at: new Date().toISOString(),
-            admin_id: adminId
-          })
-          .eq('id', id);
-
+        const { error: updateError } = await supabase.from('withdrawal_requests').update({ status: 'approved', processed_at: new Date().toISOString(), admin_id: adminId }).eq('id', id);
         if (updateError) throw updateError;
-
-        // Buscar saldo atual do usuário
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('balance')
-          .eq('id', request.user_id)
-          .single();
-
+        const { data: userData, error: userError } = await supabase.from('users').select('balance').eq('id', request.user_id).single();
         if (userError) throw userError;
-
-        // Deduzir o valor do saldo do usuário
         const newBalance = parseFloat(userData.balance) - parseFloat(request.amount);
-
-        const { error: balanceError } = await supabase
-          .from('users')
-          .update({ balance: newBalance })
-          .eq('id', request.user_id);
-
+        const { error: balanceError } = await supabase.from('users').update({ balance: newBalance }).eq('id', request.user_id);
         if (balanceError) throw balanceError;
-
-        toast.success('Saque aprovado e saldo atualizado com sucesso!');
+        toast.success('Saque aprovado e saldo atualizado!');
       } else {
-        // Para depósitos, manter a lógica original
-        const { error } = await supabase
-          .from('deposits')
-          .update({ 
-            status: 'approved',
-            approved_at: new Date().toISOString()
-          })
-          .eq('id', id);
-
+        const { error } = await supabase.from('deposits').update({ status: 'approved', approved_at: new Date().toISOString() }).eq('id', id);
         if (error) throw error;
-        toast.success('Depósito aprovado com sucesso!');
+        toast.success('Depósito aprovado!');
       }
-
       loadData();
+      loadSummary();
     } catch (error: any) {
       console.error('Erro ao aprovar:', error);
       toast.error(error.message || 'Erro ao aprovar');
     }
   };
 
-  const handleAnalyze = async (withdrawal: Withdrawal) => {
-    if (!supabase) {
-      toast.error('Banco de dados não configurado');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      
-      // Buscar informações completas da solicitação
-      const { data: requestData, error: requestError } = await supabase
-        .from('withdrawal_requests')
-        .select('*')
-        .eq('id', withdrawal.id)
-        .single();
-
-      if (requestError) throw requestError;
-      setSelectedWithdrawal(requestData as any);
-
-      // Buscar informações do usuário
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', withdrawal.user_id)
-        .single();
-
-      if (userError) throw userError;
-      setUserInfo(userData);
-
-      // Buscar estatísticas do usuário
-      const [depositsResult, withdrawalsResult] = await Promise.all([
-        supabase
-          .from('deposits')
-          .select('id, amount, status')
-          .eq('user_id', withdrawal.user_id),
-        supabase
-          .from('withdrawal_requests')
-          .select('id, amount, status')
-          .eq('user_id', withdrawal.user_id)
-      ]);
-
-      const deposits = depositsResult.data || [];
-      const withdrawals = withdrawalsResult.data || [];
-
-      setUserStats({
-        depositsCount: deposits.length,
-        withdrawalsCount: withdrawals.length,
-        totalDeposits: deposits
-          .filter((d: any) => d.status === 'approved' || d.status === 'completed')
-          .reduce((sum: number, d: any) => sum + parseFloat(d.amount), 0),
-        totalWithdrawals: withdrawals
-          .filter((w: any) => w.status === 'approved' || w.status === 'completed')
-          .reduce((sum: number, w: any) => sum + parseFloat(w.amount), 0)
-      });
-
-      setShowAnalysisModal(true);
-    } catch (error: any) {
-      console.error('Erro ao carregar informações:', error);
-      toast.error('Erro ao carregar informações do cliente');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCompleteTransfer = async () => {
-    if (!supabase || !selectedWithdrawal) {
-      toast.error('Dados não disponíveis');
-      return;
-    }
-
-    try {
-      const savedUserStr = typeof window !== 'undefined' ? localStorage.getItem('user_data') : null;
-      const adminId = savedUserStr ? JSON.parse(savedUserStr).id : null;
-
-      // Atualizar status para completed
-      const { error: updateError } = await supabase
-        .from('withdrawal_requests')
-        .update({
-          status: 'completed',
-          processed_at: new Date().toISOString(),
-          admin_id: adminId,
-          admin_response: transactionId || (transferMethod === 'api' ? 'Transferido via API' : 'Transferido manualmente')
-        })
-        .eq('id', selectedWithdrawal.id);
-
-      if (updateError) throw updateError;
-
-      // Se ainda não foi deduzido o saldo (status não era approved), deduzir agora
-      if (selectedWithdrawal.status !== 'approved') {
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('balance')
-          .eq('id', selectedWithdrawal.user_id)
-          .single();
-
-        if (!userError && userData) {
-          const newBalance = parseFloat(userData.balance) - parseFloat(selectedWithdrawal.amount.toString());
-
-          await supabase
-            .from('users')
-            .update({ balance: newBalance })
-            .eq('id', selectedWithdrawal.user_id);
-        }
-      }
-
-      toast.success('Transferência concluída e status atualizado!');
-      setShowAnalysisModal(false);
-      setSelectedWithdrawal(null);
-      setTransactionId('');
-      loadData();
-    } catch (error: any) {
-      console.error('Erro ao completar transferência:', error);
-      toast.error(error.message || 'Erro ao completar transferência');
-    }
-  };
-
   const handleReject = async (id: string, type: 'deposit' | 'withdrawal', reason?: string) => {
     try {
-      if (!supabase) {
-        toast.error('Banco de dados não configurado');
-        return;
-      }
-
+      if (!supabase) { toast.error('Banco de dados não configurado'); return; }
       if (type === 'withdrawal') {
-        // Buscar usuário atual para obter admin_id
         const savedUserStr = typeof window !== 'undefined' ? localStorage.getItem('user_data') : null;
         const adminId = savedUserStr ? JSON.parse(savedUserStr).id : null;
-
-        const { error } = await supabase
-          .from('withdrawal_requests')
-          .update({ 
-            status: 'rejected',
-            admin_response: reason || 'Rejeitado pelo administrador',
-            processed_at: new Date().toISOString(),
-            admin_id: adminId
-          })
-          .eq('id', id);
-
+        const { error } = await supabase.from('withdrawal_requests').update({ status: 'rejected', admin_response: reason || 'Rejeitado pelo administrador', processed_at: new Date().toISOString(), admin_id: adminId }).eq('id', id);
         if (error) throw error;
         toast.success('Saque rejeitado');
       } else {
-        const { error } = await supabase
-          .from('deposits')
-          .update({ 
-            status: 'rejected',
-            admin_notes: reason || 'Rejeitado pelo administrador'
-          })
-          .eq('id', id);
-
+        const { error } = await supabase.from('deposits').update({ status: 'rejected', admin_notes: reason || 'Rejeitado pelo administrador' }).eq('id', id);
         if (error) throw error;
         toast.success('Depósito rejeitado');
       }
-
       loadData();
+      loadSummary();
     } catch (error: any) {
       console.error('Erro ao rejeitar:', error);
       toast.error(error.message || 'Erro ao rejeitar');
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'approved':
-      case 'completed':
-        return 'text-green-400 bg-green-500/20';
-      case 'pending':
-      case 'processing':
-        return 'text-yellow-400 bg-yellow-500/20';
-      case 'rejected':
-        return 'text-red-400 bg-red-500/20';
-      default:
-        return 'text-gray-400 bg-gray-500/20';
+  const handleAnalyze = async (withdrawal: Withdrawal) => {
+    if (!supabase) { toast.error('Banco de dados não configurado'); return; }
+    try {
+      const { data: requestData } = await supabase.from('withdrawal_requests').select('*').eq('id', withdrawal.id).single();
+      setSelectedWithdrawal(requestData as any);
+      const { data: userData } = await supabase.from('users').select('*').eq('id', withdrawal.user_id).single();
+      setUserInfo(userData);
+      const [depositsResult, withdrawalsResult] = await Promise.all([
+        supabase.from('deposits').select('id, amount, status').eq('user_id', withdrawal.user_id),
+        supabase.from('withdrawal_requests').select('id, amount, status').eq('user_id', withdrawal.user_id),
+      ]);
+      const deps = depositsResult.data || [];
+      const wds = withdrawalsResult.data || [];
+      setUserStats({
+        depositsCount: deps.length,
+        withdrawalsCount: wds.length,
+        totalDeposits: deps.filter((d: any) => d.status === 'approved' || d.status === 'completed').reduce((s: number, d: any) => s + parseFloat(d.amount), 0),
+        totalWithdrawals: wds.filter((w: any) => w.status === 'approved' || w.status === 'completed').reduce((s: number, w: any) => s + parseFloat(w.amount), 0),
+      });
+      setShowAnalysisModal(true);
+    } catch (error: any) {
+      console.error('Erro ao carregar informações:', error);
+      toast.error('Erro ao carregar informações do cliente');
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'approved':
-      case 'completed':
-        return <CheckCircle className="w-4 h-4" />;
-      case 'pending':
-      case 'processing':
-        return <Clock className="w-4 h-4" />;
-      case 'rejected':
-        return <XCircle className="w-4 h-4" />;
-      default:
-        return <AlertCircle className="w-4 h-4" />;
+  const handleCompleteTransfer = async () => {
+    if (!supabase || !selectedWithdrawal) { toast.error('Dados não disponíveis'); return; }
+    try {
+      const savedUserStr = typeof window !== 'undefined' ? localStorage.getItem('user_data') : null;
+      const adminId = savedUserStr ? JSON.parse(savedUserStr).id : null;
+      const { error: updateError } = await supabase.from('withdrawal_requests').update({ status: 'completed', processed_at: new Date().toISOString(), admin_id: adminId, admin_response: transactionId || (transferMethod === 'api' ? 'Transferido via API' : 'Transferido manualmente') }).eq('id', selectedWithdrawal.id);
+      if (updateError) throw updateError;
+      if (selectedWithdrawal.status !== 'approved') {
+        const { data: userData } = await supabase.from('users').select('balance').eq('id', selectedWithdrawal.user_id).single();
+        if (userData) {
+          const newBalance = parseFloat(userData.balance) - parseFloat(selectedWithdrawal.amount.toString());
+          await supabase.from('users').update({ balance: newBalance }).eq('id', selectedWithdrawal.user_id);
+        }
+      }
+      toast.success('Transferência concluída!');
+      setShowAnalysisModal(false);
+      setSelectedWithdrawal(null);
+      setTransactionId('');
+      loadData();
+      loadSummary();
+    } catch (error: any) {
+      console.error('Erro ao completar transferência:', error);
+      toast.error(error.message || 'Erro ao completar transferência');
     }
   };
 
-  const stats = {
-    deposits: {
-      pending: deposits.filter(d => d.status === 'pending').length,
-      approved: deposits.filter(d => d.status === 'approved').length,
-      rejected: deposits.filter(d => d.status === 'rejected').length,
-      total: deposits.reduce((sum, d) => sum + (d.status === 'approved' ? d.amount : 0), 0)
-    },
-    withdrawals: {
-      pending: withdrawals.filter(w => w.status === 'pending').length,
-      approved: withdrawals.filter(w => w.status === 'approved').length,
-      rejected: withdrawals.filter(w => w.status === 'rejected').length,
-      total: withdrawals.reduce((sum, w) => sum + (w.status === 'approved' ? w.amount : 0), 0)
-    }
+  const getStatusBadge = (status: string) => {
+    const styles: Record<string, string> = {
+      approved: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+      completed: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+      pending: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+      processing: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
+      rejected: 'text-red-400 bg-red-500/10 border-red-500/20',
+    };
+    const icons: Record<string, React.ReactNode> = {
+      approved: <CheckCircle className="w-3 h-3" />,
+      completed: <CheckCircle className="w-3 h-3" />,
+      pending: <Clock className="w-3 h-3" />,
+      processing: <RefreshCw className="w-3 h-3" />,
+      rejected: <XCircle className="w-3 h-3" />,
+    };
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-medium ${styles[status] || 'text-white/40 bg-white/5 border-white/10'}`}>
+        {icons[status] || <AlertCircle className="w-3 h-3" />}
+        <span className="capitalize">{status}</span>
+      </span>
+    );
   };
+
+  const currentItems = activeTab === 'deposits' ? deposits : withdrawals;
+  const filteredItems = searchQuery
+    ? currentItems.filter(i => i.user_name?.toLowerCase().includes(searchQuery.toLowerCase()) || i.id.includes(searchQuery))
+    : currentItems;
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-[#0a0a0b] text-white">
       {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 sticky top-0 z-10">
+      <header className="border-b border-white/[0.06] px-6 py-4 sticky top-0 z-10 bg-[#0a0a0b]/80 backdrop-blur-xl">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold text-gray-200">Gestão Financeira</h1>
-            <p className="text-xs text-gray-500 mt-0.5 uppercase tracking-wide">Gerencie depósitos e saques</p>
+            <h1 className="text-xl font-semibold text-white tracking-tight">Gestão Financeira</h1>
+            <p className="text-xs text-white/40 mt-0.5">Gerencie depósitos e saques da plataforma</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button onClick={() => setShowPeriodMenu(!showPeriodMenu)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-medium text-white/80 hover:bg-white/10 transition-all">
+                <Clock className="w-3 h-3 text-white/40" />
+                {PERIOD_LABELS[period]}
+                <ChevronDown className="w-3 h-3 text-white/40" />
+              </button>
+              {showPeriodMenu && (
+                <div className="absolute top-full mt-1 right-0 bg-[#141416] border border-white/10 rounded-lg overflow-hidden shadow-2xl z-20 min-w-[140px]">
+                  {(Object.keys(PERIOD_LABELS) as PeriodFilter[]).map(p => (
+                    <button key={p} onClick={() => { setPeriod(p); setShowPeriodMenu(false); }} className={`w-full text-left px-3 py-2 text-xs transition-colors ${period === p ? 'bg-white/10 text-white font-medium' : 'text-white/60 hover:bg-white/5'}`}>
+                      {PERIOD_LABELS[p]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button onClick={() => { loadData(); loadSummary(); }} className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white/50 hover:bg-white/10 transition-all">
+              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Content */}
-      <div className="p-6">
-
-        {/* Estatísticas */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gray-900 border border-gray-800 rounded p-5">
+      <div className="p-6 max-w-[1400px] mx-auto">
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="bg-gradient-to-b from-amber-500/[0.04] to-transparent border border-amber-500/[0.08] rounded-xl p-5 hover:border-amber-500/20 transition-all">
             <div className="flex items-center justify-between mb-3">
-              <Clock className="w-4 h-4 text-gray-400" />
-              <span className="text-xs text-gray-500 font-medium">Pendentes</span>
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><Clock className="w-4 h-4 text-amber-400" /></div>
+              <span className="text-lg font-bold text-amber-400">{summaryStats.pendingDeposits}</span>
             </div>
-            <h3 className="text-xl font-semibold mb-1 text-white">{stats.deposits.pending}</h3>
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Depósitos Pendentes</p>
+            <p className="text-[11px] text-white/40">Depósitos Pendentes</p>
           </div>
-          <div className="bg-gray-900 border border-gray-800 rounded p-5">
+          <div className="bg-gradient-to-b from-orange-500/[0.04] to-transparent border border-orange-500/[0.08] rounded-xl p-5 hover:border-orange-500/20 transition-all">
             <div className="flex items-center justify-between mb-3">
-              <AlertCircle className="w-4 h-4 text-gray-400" />
-              <span className="text-xs text-gray-500 font-medium">Pendentes</span>
+              <div className="w-8 h-8 rounded-lg bg-orange-500/10 flex items-center justify-center"><AlertCircle className="w-4 h-4 text-orange-400" /></div>
+              <span className="text-lg font-bold text-orange-400">{summaryStats.pendingWithdrawals}</span>
             </div>
-            <h3 className="text-xl font-semibold mb-1 text-white">{stats.withdrawals.pending}</h3>
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Saques Pendentes</p>
+            <p className="text-[11px] text-white/40">Saques Pendentes</p>
           </div>
-          <div className="bg-gray-900 border border-gray-800 rounded p-5">
+          <div className="bg-gradient-to-b from-emerald-500/[0.04] to-transparent border border-emerald-500/[0.08] rounded-xl p-5 hover:border-emerald-500/20 transition-all">
             <div className="flex items-center justify-between mb-3">
-              <TrendingUp className="w-4 h-4 text-gray-400" />
-              <span className="text-xs text-gray-500 font-medium">Total</span>
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><TrendingUp className="w-4 h-4 text-emerald-400" /></div>
+              {summaryStats.depositCount > 0 && <span className="text-[10px] text-white/30 bg-white/5 px-1.5 py-0.5 rounded">{summaryStats.depositCount} ordens</span>}
             </div>
-            <h3 className="text-xl font-semibold mb-1 text-green-500">R$ {stats.deposits.total.toFixed(2)}</h3>
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Total Depositado</p>
+            <h3 className="text-xl font-bold text-emerald-400 tracking-tight">R$ {summaryStats.totalDeposits.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
+            <p className="text-[11px] text-white/40 mt-1">Total Depositado</p>
           </div>
-          <div className="bg-gray-900 border border-gray-800 rounded p-5">
+          <div className="bg-gradient-to-b from-red-500/[0.04] to-transparent border border-red-500/[0.08] rounded-xl p-5 hover:border-red-500/20 transition-all">
             <div className="flex items-center justify-between mb-3">
-              <TrendingDown className="w-4 h-4 text-gray-400" />
-              <span className="text-xs text-gray-500 font-medium">Total</span>
+              <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center"><TrendingDown className="w-4 h-4 text-red-400" /></div>
+              {summaryStats.withdrawalCount > 0 && <span className="text-[10px] text-white/30 bg-white/5 px-1.5 py-0.5 rounded">{summaryStats.withdrawalCount} ordens</span>}
             </div>
-            <h3 className="text-xl font-semibold mb-1 text-red-500">R$ {stats.withdrawals.total.toFixed(2)}</h3>
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Total Sacado</p>
+            <h3 className="text-xl font-bold text-red-400 tracking-tight">R$ {summaryStats.totalWithdrawals.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
+            <p className="text-[11px] text-white/40 mt-1">Total Sacado</p>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex space-x-2 mb-6 border-b border-gray-800">
-          <button
-            onClick={() => setActiveTab('deposits')}
-            className={`px-4 py-2 font-medium transition-colors ${
-              activeTab === 'deposits'
-                ? 'text-blue-400 border-b-2 border-blue-400'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            Depósitos
-          </button>
-          <button
-            onClick={() => setActiveTab('withdrawals')}
-            className={`px-4 py-2 font-medium transition-colors ${
-              activeTab === 'withdrawals'
-                ? 'text-blue-400 border-b-2 border-blue-400'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            Saques
-          </button>
-        </div>
-
-        {/* Filtros */}
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Status</label>
-              <select
-                value={filters.status}
-                onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
-              >
-                <option value="all">Todos</option>
+        {/* Tabs + Filters */}
+        <div className="bg-gradient-to-b from-white/[0.03] to-transparent border border-white/[0.06] rounded-xl overflow-hidden">
+          {/* Tab Bar */}
+          <div className="flex items-center justify-between border-b border-white/[0.06] px-5">
+            <div className="flex">
+              <button onClick={() => { setActiveTab('deposits'); setStatusFilter('all'); }} className={`relative px-4 py-3.5 text-xs font-medium transition-colors ${activeTab === 'deposits' ? 'text-white' : 'text-white/40 hover:text-white/60'}`}>
+                <span className="flex items-center gap-2">
+                  <ArrowDownRight className="w-3.5 h-3.5" />Depósitos
+                  {summaryStats.pendingDeposits > 0 && <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[9px] flex items-center justify-center font-bold">{summaryStats.pendingDeposits}</span>}
+                </span>
+                {activeTab === 'deposits' && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white rounded-full" />}
+              </button>
+              <button onClick={() => { setActiveTab('withdrawals'); setStatusFilter('all'); }} className={`relative px-4 py-3.5 text-xs font-medium transition-colors ${activeTab === 'withdrawals' ? 'text-white' : 'text-white/40 hover:text-white/60'}`}>
+                <span className="flex items-center gap-2">
+                  <ArrowUpRight className="w-3.5 h-3.5" />Saques
+                  {summaryStats.pendingWithdrawals > 0 && <span className="w-4 h-4 rounded-full bg-orange-500/20 text-orange-400 text-[9px] flex items-center justify-center font-bold">{summaryStats.pendingWithdrawals}</span>}
+                </span>
+                {activeTab === 'withdrawals' && <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white rounded-full" />}
+              </button>
+            </div>
+            <div className="flex items-center gap-2 py-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-white/30" />
+                <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Buscar..." className="pl-7 pr-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[11px] text-white/80 placeholder-white/30 w-[160px] focus:outline-none focus:border-white/20" />
+              </div>
+              <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[11px] text-white/70 focus:outline-none appearance-none cursor-pointer">
+                <option value="all">Todos status</option>
                 <option value="pending">Pendente</option>
                 <option value="approved">Aprovado</option>
+                <option value="completed">Concluído</option>
                 <option value="rejected">Rejeitado</option>
-                <option value="processing">Processando</option>
               </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Método</label>
-              <select
-                value={filters.method}
-                onChange={(e) => setFilters({ ...filters, method: e.target.value })}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
-              >
-                <option value="all">Todos</option>
-                <option value="pix-email">PIX (E-mail)</option>
-                <option value="pix-phone">PIX (Telefone)</option>
-                <option value="pix-random">PIX (Chave Aleatória)</option>
-                <option value="picpay">PicPay</option>
+              <select value={methodFilter} onChange={e => setMethodFilter(e.target.value)} className="px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[11px] text-white/70 focus:outline-none appearance-none cursor-pointer">
+                <option value="all">Todos métodos</option>
+                <option value="pix">PIX</option>
+                <option value="pix-email">PIX E-mail</option>
+                <option value="pix-phone">PIX Telefone</option>
+                <option value="pix-random">PIX Aleatória</option>
                 <option value="stripe">Stripe</option>
                 <option value="crypto">Crypto</option>
-                <option value="bank_transfer">Transferência</option>
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Data Início</label>
-              <input
-                type="date"
-                value={filters.dateFrom}
-                onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Data Fim</label>
-              <input
-                type="date"
-                value={filters.dateTo}
-                onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
-              />
-            </div>
           </div>
-        </div>
 
-        {/* Tabela */}
-        {loading ? (
-          <div className="text-center py-12 text-gray-400">Carregando...</div>
-        ) : (
-          <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+          {/* Table */}
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="animate-spin rounded-full h-5 w-5 border-2 border-white/20 border-t-white/60"></div>
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div className="text-center py-20">
+              <DollarSign className="w-8 h-8 text-white/10 mx-auto mb-3" />
+              <p className="text-xs text-white/30">Nenhum registro encontrado</p>
+            </div>
+          ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-800">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">ID</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Usuário</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Valor</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Método</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Data</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Ações</th>
+                <thead>
+                  <tr className="border-b border-white/[0.04]">
+                    <th className="px-5 py-3 text-left text-[10px] font-semibold text-white/30 uppercase tracking-wider">Usuário</th>
+                    <th className="px-5 py-3 text-left text-[10px] font-semibold text-white/30 uppercase tracking-wider">Valor</th>
+                    <th className="px-5 py-3 text-left text-[10px] font-semibold text-white/30 uppercase tracking-wider">Método</th>
+                    <th className="px-5 py-3 text-left text-[10px] font-semibold text-white/30 uppercase tracking-wider">Status</th>
+                    <th className="px-5 py-3 text-left text-[10px] font-semibold text-white/30 uppercase tracking-wider">Data</th>
+                    <th className="px-5 py-3 text-right text-[10px] font-semibold text-white/30 uppercase tracking-wider">Ações</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {(activeTab === 'deposits' ? deposits : withdrawals).map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-800/50">
-                      <td className="px-4 py-3 text-sm font-mono text-gray-300">{item.id.slice(0, 8)}...</td>
-                      <td className="px-4 py-3 text-sm font-mono text-gray-300">{item.user_id.slice(0, 8)}...</td>
-                      <td className="px-4 py-3 text-sm font-medium text-white">
-                        R$ {parseFloat(item.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="px-2 py-1 bg-gray-800 text-gray-300 rounded text-xs font-medium capitalize">
-                          {item.method ? item.method.replace(/-/g, ' ') : 'N/A'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center space-x-1 px-2 py-1 rounded text-xs font-medium ${getStatusColor(item.status)}`}>
-                          {getStatusIcon(item.status)}
-                          <span className="capitalize">{item.status}</span>
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-400">
-                        {new Date(item.created_at).toLocaleDateString('pt-BR', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric'
-                        })}
-                        <span className="text-gray-500 ml-2">
-                          {new Date(item.created_at).toLocaleTimeString('pt-BR', {
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center space-x-2">
-                          {item.status === 'pending' && activeTab === 'withdrawals' ? (
-                            <button
-                              onClick={() => handleAnalyze(item)}
-                              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-gray-300 transition-colors flex items-center space-x-1.5"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>Analisar</span>
-                            </button>
-                          ) : item.status === 'pending' ? (
-                            <>
-                              <button
-                                onClick={() => handleApprove(item.id, activeTab)}
-                                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-green-600/50 rounded text-xs font-medium text-green-400 transition-colors"
-                              >
-                                Aprovar
-                              </button>
-                              <button
-                                onClick={() => handleReject(item.id, activeTab)}
-                                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-red-600/50 rounded text-xs font-medium text-red-400 transition-colors"
-                              >
-                                Rejeitar
-                              </button>
-                            </>
-                          ) : null}
+                <tbody>
+                  {filteredItems.map((item) => (
+                    <tr key={item.id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${activeTab === 'deposits' ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
+                            {activeTab === 'deposits' ? <ArrowDownRight className="w-3.5 h-3.5 text-emerald-400" /> : <ArrowUpRight className="w-3.5 h-3.5 text-red-400" />}
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-medium text-white/80">{item.user_name || '—'}</p>
+                            <p className="text-[9px] text-white/25 font-mono">{item.id.slice(0, 8)}</p>
+                          </div>
                         </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className={`text-sm font-semibold tabular-nums ${activeTab === 'deposits' ? 'text-emerald-400' : 'text-red-400'}`}>
+                          R$ {parseFloat(item.amount?.toString() || '0').toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="px-2 py-0.5 bg-white/5 border border-white/10 text-white/50 rounded text-[10px] font-medium capitalize">
+                          {item.method ? item.method.replace(/-/g, ' ') : '—'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5">{getStatusBadge(item.status)}</td>
+                      <td className="px-5 py-3.5">
+                        <p className="text-[11px] text-white/50">
+                          {new Date(item.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                          <span className="text-white/25 ml-1.5">{new Date(item.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        </p>
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        {item.status === 'pending' && activeTab === 'withdrawals' ? (
+                          <button onClick={() => handleAnalyze(item as any)} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[10px] font-medium text-white/60 transition-all flex items-center gap-1.5 ml-auto">
+                            <Eye className="w-3 h-3" />Analisar
+                          </button>
+                        ) : item.status === 'pending' ? (
+                          <div className="flex items-center gap-1.5 justify-end">
+                            <button onClick={() => handleApprove(item.id, activeTab === 'deposits' ? 'deposit' : 'withdrawal')} className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg text-[10px] font-medium text-emerald-400 transition-all">
+                              Aprovar
+                            </button>
+                            <button onClick={() => handleReject(item.id, activeTab === 'deposits' ? 'deposit' : 'withdrawal')} className="px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg text-[10px] font-medium text-red-400 transition-all">
+                              Rejeitar
+                            </button>
+                          </div>
+                        ) : null}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* Modal de Análise */}
+      {/* Analysis Modal */}
       {showAnalysisModal && selectedWithdrawal && userInfo && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-black border border-gray-800 rounded max-w-4xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar">
-            <div className="p-5">
-              <div className="flex items-center justify-between mb-5 border-b border-gray-800 pb-4">
-                <h2 className="text-lg font-semibold text-gray-200 uppercase tracking-wide">Análise de Solicitação de Saque</h2>
-                <button
-                  onClick={() => {
-                    setShowAnalysisModal(false);
-                    setSelectedWithdrawal(null);
-                    setUserInfo(null);
-                    setTransactionId('');
-                  }}
-                  className="p-2 hover:bg-gray-800 rounded transition-colors"
-                >
-                  <X className="w-5 h-5 text-gray-400" />
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#0f0f11] border border-white/[0.08] rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Análise de Saque</h2>
+                  <p className="text-xs text-white/40 mt-0.5">Revise os dados antes de aprovar</p>
+                </div>
+                <button onClick={() => { setShowAnalysisModal(false); setSelectedWithdrawal(null); setUserInfo(null); setTransactionId(''); }} className="p-2 hover:bg-white/5 rounded-lg transition-colors">
+                  <X className="w-4 h-4 text-white/40" />
                 </button>
               </div>
 
-              {/* Informações da Solicitação */}
-              <div className="bg-gray-900 border border-gray-800 rounded p-5 mb-5">
-                <h3 className="text-xs font-semibold text-gray-400 mb-4 uppercase tracking-wide">Detalhes da Solicitação</h3>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Valor</p>
-                    <p className="text-xl font-bold text-green-400">
-                      R$ {parseFloat(selectedWithdrawal.amount.toString()).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                  <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Método</p>
-                    <p className="text-sm font-medium text-gray-200 capitalize">
-                      {selectedWithdrawal.method?.replace(/-/g, ' ')}
-                    </p>
-                  </div>
-                  <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Data da Solicitação</p>
-                    <p className="text-sm text-gray-300">
-                      {new Date(selectedWithdrawal.created_at).toLocaleDateString('pt-BR', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </p>
-                  </div>
-                  <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Status</p>
-                    <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${getStatusColor(selectedWithdrawal.status)}`}>
-                      {getStatusIcon(selectedWithdrawal.status)}
-                      <span className="ml-1 capitalize">{selectedWithdrawal.status}</span>
-                    </span>
-                  </div>
+              {/* Request Details */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4">
+                  <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2">Valor</p>
+                  <p className="text-2xl font-bold text-red-400">R$ {parseFloat(selectedWithdrawal.amount.toString()).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                 </div>
-                
-                {/* Dados PIX (se disponível) */}
-                {(selectedWithdrawal as any).pix_key && (
-                  <div className="pt-4 border-t border-gray-800">
-                    <h4 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">Dados PIX</h4>
-                    <div className="bg-gray-800/50 border border-gray-800 rounded p-3 space-y-2">
-                      <div>
-                        <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Chave PIX</p>
-                        <p className="text-sm text-gray-200 font-mono break-all">{(selectedWithdrawal as any).pix_key}</p>
-                      </div>
-                      {(selectedWithdrawal as any).first_name && (
-                        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-800">
-                          <div>
-                            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Nome</p>
-                            <p className="text-sm text-gray-200">{(selectedWithdrawal as any).first_name} {(selectedWithdrawal as any).last_name}</p>
-                          </div>
-                          {(selectedWithdrawal as any).cpf && (
-                            <div>
-                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">CPF</p>
-                              <p className="text-sm text-gray-200 font-mono">{(selectedWithdrawal as any).cpf}</p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Informações do Cliente */}
-              <div className="bg-gray-900 border border-gray-800 rounded p-5 mb-5">
-                <h3 className="text-xs font-semibold text-gray-400 mb-4 uppercase tracking-wide flex items-center">
-                  <User className="w-4 h-4 mr-2" />
-                  Informações do Cliente
-                </h3>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Nome</p>
-                    <p className="text-sm font-medium text-gray-200">{userInfo.name}</p>
-                  </div>
-                  <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">E-mail</p>
-                    <p className="text-sm text-gray-300 break-all">{userInfo.email}</p>
-                  </div>
-                  <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Saldo Atual</p>
-                    <p className="text-xl font-bold text-green-400">
-                      R$ {parseFloat(userInfo.balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                  <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">ID do Usuário</p>
-                    <p className="text-sm text-gray-400 font-mono">{userInfo.id}</p>
-                  </div>
-                </div>
-
-                {/* Estatísticas do Cliente */}
-                <div className="pt-4 border-t border-gray-800">
-                  <h4 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">Histórico</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                      <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Depósitos</p>
-                      <p className="text-xl font-bold text-white mb-1">{userStats.depositsCount}</p>
-                      <p className="text-xs text-gray-500">Total: R$ {userStats.totalDeposits.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                    </div>
-                    <div className="bg-gray-800/50 border border-gray-800 rounded p-3">
-                      <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Saques</p>
-                      <p className="text-xl font-bold text-white mb-1">{userStats.withdrawalsCount}</p>
-                      <p className="text-xs text-gray-500">Total: R$ {userStats.totalWithdrawals.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                    </div>
-                  </div>
+                <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4">
+                  <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2">Método</p>
+                  <p className="text-sm font-medium text-white/80 capitalize">{selectedWithdrawal.method?.replace(/-/g, ' ')}</p>
+                  <p className="text-[10px] text-white/30 mt-1">{new Date(selectedWithdrawal.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
                 </div>
               </div>
 
-              {/* Opções de Transferência */}
-              <div className="bg-gray-900 border border-gray-800 rounded p-5 mb-5">
-                <h3 className="text-xs font-semibold text-gray-400 mb-4 uppercase tracking-wide">Método de Transferência</h3>
-                
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <button
-                    onClick={() => setTransferMethod('api')}
-                    className={`px-4 py-4 rounded border transition-colors text-left ${
-                      transferMethod === 'api'
-                        ? 'bg-gray-800 border-blue-500/50 text-white'
-                        : 'bg-gray-800/50 border-gray-800 text-gray-300 hover:border-gray-700'
-                    }`}
-                  >
-                    <div className="flex items-start space-x-3">
-                      <Send className={`w-5 h-5 mt-0.5 ${transferMethod === 'api' ? 'text-blue-400' : 'text-gray-400'}`} />
-                      <div>
-                        <p className="text-sm font-medium mb-1">Via API</p>
-                        <p className="text-xs text-gray-500">Transferência automática</p>
-                      </div>
+              {/* PIX Data */}
+              {(selectedWithdrawal as any).pix_key && (
+                <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4 mb-5">
+                  <p className="text-[10px] text-white/30 uppercase tracking-wider mb-3">Dados PIX</p>
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-[10px] text-white/30">Chave PIX</p>
+                      <p className="text-xs text-white/80 font-mono break-all">{(selectedWithdrawal as any).pix_key}</p>
                     </div>
+                    {(selectedWithdrawal as any).first_name && (
+                      <div className="flex gap-4 pt-2 border-t border-white/[0.06]">
+                        <div><p className="text-[10px] text-white/30">Nome</p><p className="text-xs text-white/80">{(selectedWithdrawal as any).first_name} {(selectedWithdrawal as any).last_name}</p></div>
+                        {(selectedWithdrawal as any).cpf && <div><p className="text-[10px] text-white/30">CPF</p><p className="text-xs text-white/80 font-mono">{(selectedWithdrawal as any).cpf}</p></div>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* User Info */}
+              <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4 mb-5">
+                <p className="text-[10px] text-white/30 uppercase tracking-wider mb-3 flex items-center gap-1.5"><User className="w-3 h-3" />Cliente</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><p className="text-[10px] text-white/30">Nome</p><p className="text-xs text-white/80 font-medium">{userInfo.name}</p></div>
+                  <div><p className="text-[10px] text-white/30">E-mail</p><p className="text-xs text-white/60 break-all">{userInfo.email}</p></div>
+                  <div><p className="text-[10px] text-white/30">Saldo Atual</p><p className="text-sm font-bold text-emerald-400">R$ {parseFloat(userInfo.balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                  <div><p className="text-[10px] text-white/30">Histórico</p><p className="text-xs text-white/60">{userStats.depositsCount} depósitos · {userStats.withdrawalsCount} saques</p></div>
+                </div>
+              </div>
+
+              {/* Transfer Method */}
+              <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4 mb-6">
+                <p className="text-[10px] text-white/30 uppercase tracking-wider mb-3">Método de Transferência</p>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <button onClick={() => setTransferMethod('api')} className={`p-3 rounded-lg border text-left transition-all ${transferMethod === 'api' ? 'bg-white/5 border-white/20' : 'border-white/[0.06] hover:border-white/10'}`}>
+                    <Send className={`w-4 h-4 mb-1.5 ${transferMethod === 'api' ? 'text-blue-400' : 'text-white/30'}`} />
+                    <p className="text-xs font-medium text-white/80">Via API</p>
+                    <p className="text-[10px] text-white/30">Automática</p>
                   </button>
-                  <button
-                    onClick={() => setTransferMethod('manual')}
-                    className={`px-4 py-4 rounded border transition-colors text-left ${
-                      transferMethod === 'manual'
-                        ? 'bg-gray-800 border-blue-500/50 text-white'
-                        : 'bg-gray-800/50 border-gray-800 text-gray-300 hover:border-gray-700'
-                    }`}
-                  >
-                    <div className="flex items-start space-x-3">
-                      <User className={`w-5 h-5 mt-0.5 ${transferMethod === 'manual' ? 'text-blue-400' : 'text-gray-400'}`} />
-                      <div>
-                        <p className="text-sm font-medium mb-1">Manual</p>
-                        <p className="text-xs text-gray-500">Transferência manual via PIX</p>
-                      </div>
-                    </div>
+                  <button onClick={() => setTransferMethod('manual')} className={`p-3 rounded-lg border text-left transition-all ${transferMethod === 'manual' ? 'bg-white/5 border-white/20' : 'border-white/[0.06] hover:border-white/10'}`}>
+                    <User className={`w-4 h-4 mb-1.5 ${transferMethod === 'manual' ? 'text-blue-400' : 'text-white/30'}`} />
+                    <p className="text-xs font-medium text-white/80">Manual</p>
+                    <p className="text-[10px] text-white/30">Via PIX direto</p>
                   </button>
                 </div>
-
                 {transferMethod === 'manual' && (
-                  <div className="mt-4 pt-4 border-t border-gray-800">
-                    <label className="block text-xs font-medium mb-2 text-gray-400 uppercase tracking-wide">ID da Transação (opcional)</label>
-                    <input
-                      type="text"
-                      value={transactionId}
-                      onChange={(e) => setTransactionId(e.target.value)}
-                      placeholder="Ex: E12345678920240101120000"
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-800 rounded text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-700"
-                    />
+                  <div>
+                    <label className="block text-[10px] text-white/30 uppercase tracking-wider mb-1.5">ID da Transação (opcional)</label>
+                    <input type="text" value={transactionId} onChange={e => setTransactionId(e.target.value)} placeholder="Ex: E12345678920240101120000" className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-white/80 placeholder-white/20 focus:outline-none focus:border-white/20" />
                   </div>
                 )}
               </div>
 
-              {/* Botões de Ação */}
-              <div className="flex items-center justify-end space-x-2 pt-4 border-t border-gray-800">
-                <button
-                  onClick={() => {
-                    setShowAnalysisModal(false);
-                    setSelectedWithdrawal(null);
-                    setUserInfo(null);
-                    setTransactionId('');
-                  }}
-                  className="px-4 py-2 bg-gray-900 hover:bg-gray-800 border border-gray-800 rounded text-xs font-medium text-gray-400 transition-colors"
-                >
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-white/[0.06]">
+                <button onClick={() => { setShowAnalysisModal(false); setSelectedWithdrawal(null); setUserInfo(null); setTransactionId(''); }} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-white/50 transition-all">
                   Cancelar
                 </button>
-                <button
-                  onClick={handleCompleteTransfer}
-                  className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-green-600/50 rounded text-xs font-medium text-green-400 transition-colors flex items-center space-x-2"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Marcar como Concluído</span>
+                <button onClick={handleCompleteTransfer} className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg text-xs font-medium text-emerald-400 transition-all flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5" />Concluir Transferência
                 </button>
               </div>
             </div>
@@ -831,4 +588,3 @@ export default function FinancePage() {
     </div>
   );
 }
-

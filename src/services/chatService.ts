@@ -1,7 +1,6 @@
-import { supabase } from '@/lib/supabase';
-
 /**
  * Serviço para gerenciar chat e suporte
+ * Usa API route server-side com service_role para evitar problemas de RLS
  */
 
 /**
@@ -38,9 +37,7 @@ export async function createChat(
   userId: string,
   subject?: string
 ): Promise<Chat | null> {
-  // Se o userId não for UUID válido, usar modo local
-  if (!supabase || !isValidUUID(userId)) {
-    // Modo local - retornar chat fictício
+  if (!isValidUUID(userId)) {
     return {
       id: 'chat-' + Date.now(),
       userId,
@@ -52,22 +49,19 @@ export async function createChat(
   }
 
   try {
-    const { data, error } = await supabase
-      .from('chats')
-      .insert({
-        user_id: userId,
-        status: 'waiting',
-        subject: subject || 'Nova conversa',
-      })
-      .select()
-      .single();
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create-chat', userId, subject }),
+    });
 
-    if (error) {
-      console.error('[ChatService] Error:', error instanceof Error ? error.message : 'Unknown error');
-      
+    const json = await res.json();
+    if (!res.ok) {
+      console.error('[ChatService] Error creating chat:', json.error);
       return null;
     }
 
+    const data = json.data;
     return {
       id: data.id,
       userId: data.user_id,
@@ -86,25 +80,20 @@ export async function createChat(
  * Busca chats do usuário
  */
 export async function getUserChats(userId: string): Promise<Chat[]> {
-  // Se o userId não for UUID válido, usar modo local
-  if (!supabase || !isValidUUID(userId)) {
+  if (!isValidUUID(userId)) {
     return [];
   }
 
   try {
-    const { data, error } = await supabase
-      .from('chats')
-      .select('*')
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
+    const res = await fetch(`/api/chat?userId=${userId}`);
+    const json = await res.json();
 
-    if (error) {
-      console.error('[ChatService] Error:', error instanceof Error ? error.message : 'Unknown error');
-      
+    if (!res.ok) {
+      console.error('[ChatService] Error loading chats:', json.error);
       return [];
     }
 
-    return (data || []).map(chat => ({
+    return (json.data || []).map((chat: any) => ({
       id: chat.id,
       userId: chat.user_id,
       status: chat.status as 'open' | 'closed' | 'waiting',
@@ -126,8 +115,7 @@ export async function sendMessage(
   userId: string,
   message: string
 ): Promise<ChatMessage | null> {
-  // Se o userId não for UUID válido, usar modo local
-  if (!supabase || !isValidUUID(userId)) {
+  if (!isValidUUID(userId)) {
     return {
       id: 'msg-' + Date.now(),
       chatId,
@@ -139,22 +127,19 @@ export async function sendMessage(
   }
 
   try {
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .insert({
-        chat_id: chatId,
-        user_id: userId,
-        message,
-        is_from_support: false,
-      })
-      .select()
-      .single();
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'send-message', chatId, userId, message }),
+    });
 
-    if (error) {
-      console.error('[ChatService] Error:', error instanceof Error ? error.message : 'Unknown error');
+    const json = await res.json();
+    if (!res.ok) {
+      console.error('[ChatService] Error sending message:', json.error);
       return null;
     }
 
+    const data = json.data;
     return {
       id: data.id,
       chatId: data.chat_id,
@@ -173,24 +158,20 @@ export async function sendMessage(
  * Busca mensagens do chat
  */
 export async function getChatMessages(chatId: string): Promise<ChatMessage[]> {
-  // Se o chatId não for UUID válido, retornar array vazio (chat local)
-  if (!supabase || !isValidUUID(chatId)) {
+  if (!isValidUUID(chatId)) {
     return [];
   }
 
   try {
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .select('*')
-      .eq('chat_id', chatId)
-      .order('created_at', { ascending: true });
+    const res = await fetch(`/api/chat?chatId=${chatId}`);
+    const json = await res.json();
 
-    if (error) {
-      console.error('[ChatService] Error:', error instanceof Error ? error.message : 'Unknown error');
+    if (!res.ok) {
+      console.error('[ChatService] Error loading messages:', json.error);
       return [];
     }
 
-    return (data || []).map(msg => ({
+    return (json.data || []).map((msg: any) => ({
       id: msg.id,
       chatId: msg.chat_id,
       userId: msg.user_id,
@@ -203,4 +184,3 @@ export async function getChatMessages(chatId: string): Promise<ChatMessage[]> {
     return [];
   }
 }
-

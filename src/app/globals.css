@@ -346,10 +346,26 @@ input[type="number"] {
   }
 }
 
+/* Scrollbar hide utility */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* Mobile Landscape - Maximizar espaço do gráfico */
 @media (max-width: 767px) and (orientation: landscape) {
   .mobile-landscape-compact {
     padding-top: 0 !important;
     padding-bottom: 0 !important;
+  }
+}
+
+/* Mobile - Prevent overscroll bounce */
+@media (max-width: 767px) {
+  html, body {
+    overscroll-behavior: none;
   }
 }

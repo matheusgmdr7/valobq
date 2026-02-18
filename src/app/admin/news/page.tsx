@@ -276,19 +276,19 @@ export default function NewsAdminPage() {
   });
 
   return (
-    <div className="bg-black text-white">
+    <div className="min-h-screen bg-[#0a0a0b] text-white">
       {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 sticky top-0 z-10">
-        <div className="flex items-center justify-between">
+      <header className="sticky top-0 z-10 bg-[#0a0a0b]/80 backdrop-blur-xl border-b border-white/[0.06]">
+        <div className="flex items-center justify-between px-6 py-4">
           <div>
-            <h1 className="text-lg font-semibold text-gray-200">Notícias de Mercado</h1>
-            <p className="text-xs text-gray-500 mt-0.5 uppercase tracking-wide">Gerencie notícias e análises do mercado</p>
+            <h1 className="text-base font-semibold text-white/90">Notícias de Mercado</h1>
+            <p className="text-[11px] text-white/30 mt-0.5">Gerencie notícias e análises do mercado</p>
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={handleSyncAPI}
               disabled={syncing}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center space-x-2 px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] rounded-lg text-[11px] font-medium text-white/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
               <span>{syncing ? 'Sincronizando...' : 'Sincronizar API'}</span>
@@ -299,7 +299,7 @@ export default function NewsAdminPage() {
                 setEditingNews(null);
                 setShowModal(true);
               }}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-gray-300 transition-colors"
+              className="flex items-center space-x-2 px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] rounded-lg text-[11px] font-medium text-white/70 transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Nova Notícia</span>
@@ -314,13 +314,13 @@ export default function NewsAdminPage() {
         <div className="mb-6 flex items-center space-x-4">
           <div className="flex-1">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Buscar notícias..."
-                className="w-full pl-10 pr-4 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-700"
+                className="w-full pl-10 pr-4 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
               />
             </div>
           </div>
@@ -328,7 +328,7 @@ export default function NewsAdminPage() {
             <select
               value={filterCategory}
               onChange={(e) => setFilterCategory(e.target.value)}
-              className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+              className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
             >
               <option value="all">Todas as categorias</option>
               <option value="forex">Forex</option>
@@ -341,10 +341,10 @@ export default function NewsAdminPage() {
         </div>
 
         {loading ? (
-          <div className="text-center py-12 text-gray-500 text-sm">Carregando...</div>
+          <div className="text-center py-16"><div className="w-6 h-6 border-2 border-white/10 border-t-white/40 rounded-full animate-spin mx-auto mb-3" /><p className="text-xs text-white/30">Carregando...</p></div>
         ) : filteredNews.length === 0 ? (
-          <div className="bg-gray-900 border border-gray-800 rounded p-6 text-center">
-            <p className="text-sm text-gray-500">
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-6 text-center">
+            <p className="text-sm text-white/30">
               {searchTerm || filterCategory !== 'all' ? 'Nenhuma notícia encontrada com os filtros aplicados' : 'Nenhuma notícia cadastrada'}
             </p>
           </div>
@@ -353,15 +353,15 @@ export default function NewsAdminPage() {
             {filteredNews.map((newsItem) => (
               <div
                 key={newsItem.id}
-                className="bg-gray-900 border border-gray-800 rounded p-5 hover:border-gray-700 transition-colors"
+                className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.1] transition-colors"
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center space-x-2 mb-2">
-                      <div className="text-gray-400">
+                      <div className="text-white/30">
                         {getCategoryIcon(newsItem.category)}
                       </div>
-                      <span className="px-2 py-1 rounded text-xs bg-gray-800 text-gray-400">
+                      <span className="px-2 py-1 rounded text-xs bg-white/[0.06] text-white/30">
                         {newsItem.category}
                       </span>
                       {newsItem.isImportant && (
@@ -370,9 +370,9 @@ export default function NewsAdminPage() {
                         </span>
                       )}
                     </div>
-                    <h3 className="text-sm font-semibold text-gray-200 mb-2">{newsItem.title}</h3>
-                    <p className="text-xs text-gray-500 mb-3 line-clamp-2">{newsItem.content}</p>
-                    <div className="flex items-center space-x-4 text-xs text-gray-500">
+                    <h3 className="text-sm font-semibold text-white/80 mb-2">{newsItem.title}</h3>
+                    <p className="text-xs text-white/30 mb-3 line-clamp-2">{newsItem.content}</p>
+                    <div className="flex items-center space-x-4 text-xs text-white/30">
                       <span>{newsItem.source}</span>
                       <span>•</span>
                       <span>{new Date(newsItem.publishedAt).toLocaleDateString('pt-BR')}</span>
@@ -381,14 +381,14 @@ export default function NewsAdminPage() {
                   <div className="flex items-center space-x-2 ml-4">
                     <button
                       onClick={() => handleEdit(newsItem)}
-                      className="p-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-gray-300 transition-colors"
+                      className="p-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-white/40 transition-colors"
                       title="Editar"
                     >
                       <Edit className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => handleDelete(newsItem.id)}
-                      className="p-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-gray-300 transition-colors"
+                      className="p-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-white/40 transition-colors"
                       title="Deletar"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -404,10 +404,10 @@ export default function NewsAdminPage() {
       {/* Modal de Criação/Edição */}
       {showModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-black border border-gray-800 rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar">
+          <div className="bg-[#111113] border border-white/[0.08] rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar">
             <div className="p-6">
-              <div className="flex items-center justify-between mb-6 border-b border-gray-800 pb-4">
-                <h2 className="text-lg font-semibold text-gray-200">
+              <div className="flex items-center justify-between mb-6 border-b border-white/[0.06] pb-4">
+                <h2 className="text-sm font-semibold text-white/90">
                   {editingNews ? 'Editar Notícia' : 'Nova Notícia'}
                 </h2>
                 <button
@@ -416,30 +416,30 @@ export default function NewsAdminPage() {
                     setEditingNews(null);
                     resetForm();
                   }}
-                  className="p-1.5 hover:bg-gray-800 rounded transition-colors"
+                  className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors"
                 >
-                  <X className="w-4 h-4 text-gray-400" />
+                  <X className="w-4 h-4 text-white/30" />
                 </button>
               </div>
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Título</label>
+                  <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Título</label>
                   <input
                     type="text"
                     value={formData.title}
                     onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                    className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
                     placeholder="Título da notícia"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Conteúdo</label>
+                  <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Conteúdo</label>
                   <textarea
                     value={formData.content}
                     onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                    className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
                     rows={5}
                     placeholder="Conteúdo da notícia"
                   />
@@ -447,22 +447,22 @@ export default function NewsAdminPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Fonte</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Fonte</label>
                     <input
                       type="text"
                       value={formData.source}
                       onChange={(e) => setFormData({ ...formData, source: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
                       placeholder="Ex: Financial Times"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Categoria</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Categoria</label>
                     <select
                       value={formData.category}
                       onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
                     >
                       <option value="forex">Forex</option>
                       <option value="crypto">Criptomoedas</option>
@@ -475,23 +475,23 @@ export default function NewsAdminPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">URL da Imagem</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">URL da Imagem</label>
                     <input
                       type="url"
                       value={formData.imageUrl}
                       onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
                       placeholder="https://..."
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">URL da Notícia</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">URL da Notícia</label>
                     <input
                       type="url"
                       value={formData.url}
                       onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
                       placeholder="https://..."
                     />
                   </div>
@@ -499,12 +499,12 @@ export default function NewsAdminPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Data de Publicação</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Data de Publicação</label>
                     <input
                       type="date"
                       value={formData.publishedAt}
                       onChange={(e) => setFormData({ ...formData, publishedAt: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
                     />
                   </div>
 
@@ -515,17 +515,17 @@ export default function NewsAdminPage() {
                         id="is_important"
                         checked={formData.isImportant}
                         onChange={(e) => setFormData({ ...formData, isImportant: e.target.checked })}
-                        className="w-4 h-4 bg-gray-900 border-gray-800 text-gray-200"
+                        className="w-4 h-4 bg-white/[0.03] border-white/[0.1] rounded text-white/80"
                       />
-                      <label htmlFor="is_important" className="text-sm text-gray-300">Marcar como importante</label>
+                      <label htmlFor="is_important" className="text-xs text-white/50">Marcar como importante</label>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2 pt-4 border-t border-gray-800">
+                <div className="flex items-center space-x-2 pt-4 border-t border-white/[0.06]">
                   <button
                     onClick={handleSave}
-                    className="flex-1 flex items-center justify-center space-x-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-sm font-medium text-gray-300 transition-colors"
+                    className="flex-1 flex items-center justify-center space-x-2 px-4 py-2 bg-white/[0.08] hover:bg-white/[0.12] border border-white/[0.08] rounded-xl text-xs font-semibold text-white/80 transition-colors"
                   >
                     <Save className="w-3.5 h-3.5" />
                     <span>Salvar</span>
@@ -536,7 +536,7 @@ export default function NewsAdminPage() {
                       setEditingNews(null);
                       resetForm();
                     }}
-                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-sm font-medium text-gray-300 transition-colors"
+                    className="px-4 py-2 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] rounded-xl text-xs font-medium text-white/40 transition-colors"
                   >
                     Cancelar
                   </button>

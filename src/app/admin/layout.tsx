@@ -44,14 +44,11 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="h-screen bg-black flex overflow-hidden">
+    <div className="h-screen bg-[#0a0a0b] flex overflow-hidden">
       <AdminSidebar />
       <div 
-        className="flex-1 ml-64 overflow-y-auto custom-scrollbar h-full" 
-        style={{ 
-          scrollbarWidth: 'thin', 
-          scrollbarColor: 'rgba(75, 85, 99, 0.3) rgba(17, 24, 39, 0.1)' 
-        }}
+        className="flex-1 ml-60 overflow-y-auto h-full" 
+        style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.06) transparent' }}
       >
         {children}
       </div>

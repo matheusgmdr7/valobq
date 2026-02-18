@@ -323,41 +323,41 @@ export default function AnalyticsPage() {
   };
 
   return (
-    <div className="bg-black text-white">
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 sticky top-0 z-10">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-[#0a0a0b] text-white">
+      <header className="sticky top-0 z-10 bg-[#0a0a0b]/80 backdrop-blur-xl border-b border-white/[0.06]">
+        <div className="px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold text-gray-200">Analytics</h1>
-            <p className="text-xs text-gray-500 mt-0.5 uppercase tracking-wide">Estatísticas e análises da plataforma</p>
+            <h1 className="text-base font-semibold text-white/90">Analytics</h1>
+            <p className="text-[11px] text-white/30 mt-0.5">Estatísticas e análises da plataforma</p>
           </div>
           <div className="flex items-center space-x-3">
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setPeriod('7d')}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
                   period === '7d'
-                    ? 'bg-gray-800 text-white border border-gray-700'
-                    : 'bg-gray-900 text-gray-400 hover:text-gray-300 border border-gray-800'
+                    ? 'bg-white/[0.08] text-white/90 border border-white/[0.08]'
+                    : 'bg-white/[0.06] hover:bg-white/[0.1] text-white/70 border border-white/[0.08]'
                 }`}
               >
                 7 dias
               </button>
               <button
                 onClick={() => setPeriod('30d')}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
                   period === '30d'
-                    ? 'bg-gray-800 text-white border border-gray-700'
-                    : 'bg-gray-900 text-gray-400 hover:text-gray-300 border border-gray-800'
+                    ? 'bg-white/[0.08] text-white/90 border border-white/[0.08]'
+                    : 'bg-white/[0.06] hover:bg-white/[0.1] text-white/70 border border-white/[0.08]'
                 }`}
               >
                 30 dias
               </button>
               <button
                 onClick={() => setPeriod('90d')}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
                   period === '90d'
-                    ? 'bg-gray-800 text-white border border-gray-700'
-                    : 'bg-gray-900 text-gray-400 hover:text-gray-300 border border-gray-800'
+                    ? 'bg-white/[0.08] text-white/90 border border-white/[0.08]'
+                    : 'bg-white/[0.06] hover:bg-white/[0.1] text-white/70 border border-white/[0.08]'
                 }`}
               >
                 90 dias
@@ -366,7 +366,7 @@ export default function AnalyticsPage() {
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-gray-300 transition-colors disabled:opacity-50"
+              className="flex items-center space-x-2 px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] rounded-lg text-[11px] font-medium text-white/70 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               <span>Atualizar</span>
@@ -377,82 +377,77 @@ export default function AnalyticsPage() {
 
       <main className="p-6">
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400 mx-auto"></div>
-              <p className="text-sm text-gray-500 mt-4">Carregando analytics...</p>
-            </div>
-          </div>
+          <div className="text-center py-16"><div className="w-6 h-6 border-2 border-white/10 border-t-white/40 rounded-full animate-spin mx-auto mb-3" /><p className="text-xs text-white/30">Carregando...</p></div>
         ) : (
           <>
             {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <Users className="w-4 h-4 text-gray-400" />
-                  <span className="text-xs text-gray-500 font-medium">Total</span>
+                  <Users className="w-4 h-4 text-white/40" />
+                  <span className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Total</span>
                 </div>
-                <h3 className="text-xl font-semibold mb-1 text-white">{data.totalUsers.toLocaleString('pt-BR')}</h3>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Usuários</p>
-                <p className="text-xs text-gray-400 mt-1">{data.activeUsers} ativos</p>
+                <h3 className="text-xl font-semibold mb-1 text-white/90">{data.totalUsers.toLocaleString('pt-BR')}</h3>
+                <p className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Usuários</p>
+                <p className="text-xs text-white/40 mt-1">{data.activeUsers} ativos</p>
               </div>
 
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <Activity className="w-4 h-4 text-gray-400" />
-                  <span className="text-xs text-gray-500 font-medium">Total</span>
+                  <Activity className="w-4 h-4 text-white/40" />
+                  <span className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Total</span>
                 </div>
-                <h3 className="text-xl font-semibold mb-1 text-white">{data.totalTrades.toLocaleString('pt-BR')}</h3>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Trades</p>
-                <p className="text-xs text-gray-400 mt-1">{data.activeTrades} ativos</p>
+                <h3 className="text-xl font-semibold mb-1 text-white/90">{data.totalTrades.toLocaleString('pt-BR')}</h3>
+                <p className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Trades</p>
+                <p className="text-xs text-white/40 mt-1">{data.activeTrades} ativos</p>
               </div>
 
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <DollarSign className="w-4 h-4 text-gray-400" />
-                  <span className="text-xs text-gray-500 font-medium">Receita</span>
+                  <DollarSign className="w-4 h-4 text-white/40" />
+                  <span className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Receita</span>
                 </div>
-                <h3 className="text-xl font-semibold mb-1 text-white">{formatCurrency(data.totalRevenue)}</h3>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Total</p>
+                <h3 className="text-xl font-semibold mb-1 text-white/90">{formatCurrency(data.totalRevenue)}</h3>
+                <p className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Total</p>
               </div>
 
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <TrendingUp className="w-4 h-4 text-gray-400" />
-                  <span className={`text-xs font-medium ${data.winRate >= 50 ? 'text-green-500' : 'text-red-500'}`}>
+                  <TrendingUp className="w-4 h-4 text-white/40" />
+                  <span className={`text-xs font-medium ${data.winRate >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>
                     {data.winRate.toFixed(1)}%
                   </span>
                 </div>
-                <h3 className="text-xl font-semibold mb-1 text-white">{formatCurrency(data.avgTradeAmount)}</h3>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Ticket Médio</p>
-                <p className="text-xs text-gray-400 mt-1">Win Rate: {data.winRate.toFixed(1)}%</p>
+                <h3 className="text-xl font-semibold mb-1 text-white/90">{formatCurrency(data.avgTradeAmount)}</h3>
+                <p className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Ticket Médio</p>
+                <p className="text-xs text-white/40 mt-1">Win Rate: {data.winRate.toFixed(1)}%</p>
               </div>
             </div>
 
             {/* Secondary Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-gray-500 uppercase tracking-wide">Depósitos</span>
-                  <TrendingUp className="w-4 h-4 text-green-500" />
+                  <span className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Depósitos</span>
+                  <TrendingUp className="w-4 h-4 text-emerald-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-white">{formatCurrency(data.totalDeposits)}</h3>
+                <h3 className="text-lg font-semibold text-white/90">{formatCurrency(data.totalDeposits)}</h3>
               </div>
 
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-gray-500 uppercase tracking-wide">Saques</span>
-                  <TrendingDown className="w-4 h-4 text-red-500" />
+                  <span className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Saques</span>
+                  <TrendingDown className="w-4 h-4 text-red-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-white">{formatCurrency(data.totalWithdrawals)}</h3>
+                <h3 className="text-lg font-semibold text-white/90">{formatCurrency(data.totalWithdrawals)}</h3>
               </div>
 
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-gray-500 uppercase tracking-wide">Saldo Líquido</span>
-                  <BarChart3 className="w-4 h-4 text-gray-400" />
+                  <span className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Saldo Líquido</span>
+                  <BarChart3 className="w-4 h-4 text-white/40" />
                 </div>
-                <h3 className="text-lg font-semibold text-white">
+                <h3 className="text-lg font-semibold text-white/90">
                   {formatCurrency(data.totalDeposits - data.totalWithdrawals)}
                 </h3>
               </div>
@@ -461,8 +456,8 @@ export default function AnalyticsPage() {
             {/* Charts */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               {/* Trades Chart */}
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4 uppercase tracking-wide">Trades ao Longo do Tempo</h3>
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-white/80 mb-4 uppercase tracking-wider">Trades ao Longo do Tempo</h3>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -483,8 +478,8 @@ export default function AnalyticsPage() {
               </div>
 
               {/* Revenue Chart */}
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4 uppercase tracking-wide">Receita ao Longo do Tempo</h3>
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-white/80 mb-4 uppercase tracking-wider">Receita ao Longo do Tempo</h3>
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -508,8 +503,8 @@ export default function AnalyticsPage() {
 
             {/* Users and Deposits Chart */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4 uppercase tracking-wide">Novos Usuários</h3>
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-white/80 mb-4 uppercase tracking-wider">Novos Usuários</h3>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -529,8 +524,8 @@ export default function AnalyticsPage() {
                 </ResponsiveContainer>
               </div>
 
-              <div className="bg-gray-900 border border-gray-800 rounded p-5">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4 uppercase tracking-wide">Depósitos ao Longo do Tempo</h3>
+              <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-white/80 mb-4 uppercase tracking-wider">Depósitos ao Longo do Tempo</h3>
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />

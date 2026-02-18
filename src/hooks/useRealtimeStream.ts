@@ -17,6 +17,12 @@ export interface RealtimeTick {
   change?: number;
   changePercent?: number;
   isOTC?: boolean;
+  // Dados OHLC completos (disponíveis para crypto via Binance kline)
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  isClosed?: boolean; // true = candle fechou, false = em formação
 }
 
 export interface UseRealtimeStreamOptions {
@@ -155,6 +161,12 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
               change: message.data.change,
               changePercent: message.data.changePercent,
               isOTC: message.data.isOTC || false,
+              // OHLC + isClosed da Binance kline
+              open: message.data.open,
+              high: message.data.high,
+              low: message.data.low,
+              close: message.data.close,
+              isClosed: message.data.isClosed,
             };
 
             // Log detalhado para rastrear discrepâncias
@@ -162,6 +174,9 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
             logger.log(`   💰 Preço: ${tick.price.toFixed(5)}`);
             logger.log(`   📅 Timestamp: ${tick.timestamp} (${new Date(tick.timestamp).toISOString()})`);
             logger.log(`   📊 Símbolo: ${tick.symbol}`);
+            if (tick.isClosed !== undefined) {
+              logger.log(`   🕯️ isClosed: ${tick.isClosed} | OHLC: O=${tick.open} H=${tick.high} L=${tick.low} C=${tick.close}`);
+            }
 
             setLastTick(tick);
 

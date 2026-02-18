@@ -95,28 +95,44 @@ export class TradeService {
         };
       }
 
-      // Determinar se ganhou ou perdeu
+      // Determinar se ganhou ou perdeu (com tolerância para empate)
       const priceChange = exitPrice - trade.entryPrice;
-      const isWin = trade.type === 'call' ? priceChange > 0 : priceChange < 0;
+      const epsilon = trade.entryPrice * 0.000001; // 0.0001% de tolerância para floating-point
+      const isDraw = Math.abs(priceChange) < epsilon;
+      const isWin = isDraw ? false : (trade.type === 'call' ? priceChange > 0 : priceChange < 0);
 
       // Calcular lucro (payout baseado no tipo de ativo)
       const payoutPercent = 88; // TODO: Obter do marketService
-      const profit = isWin ? trade.amount * (payoutPercent / 100) : -trade.amount;
+      let profit: number;
+      let result: 'win' | 'loss' | undefined;
+      
+      if (isDraw) {
+        profit = 0;
+        result = undefined;
+      } else if (isWin) {
+        profit = trade.amount * (payoutPercent / 100);
+        result = 'win';
+      } else {
+        profit = -trade.amount;
+        result = 'loss';
+      }
+
+      logger.log(`[TradeService] Resultado: entry=${trade.entryPrice} exit=${exitPrice} diff=${priceChange.toFixed(6)} type=${trade.type} → ${isDraw ? 'DRAW' : (isWin ? 'WIN' : 'LOSS')}`);
 
       // Atualizar trade
       const updatedTrade: Trade = {
         ...trade,
         exitPrice,
-        result: isWin ? 'win' : 'loss',
+        result,
         profit,
         updatedAt: Date.now(),
       };
 
-      // Atualizar no banco
+      // Atualizar no banco (draw: result='draw', profit=0)
       await db.updateTrade(tradeId, {
         exitPrice: updatedTrade.exitPrice,
-        result: updatedTrade.result,
-        profit: updatedTrade.profit,
+        result: isDraw ? 'draw' as any : updatedTrade.result,
+        profit: updatedTrade.profit ?? 0,
       });
 
       logger.log('✅ [TradeService] Resultado calculado:', {

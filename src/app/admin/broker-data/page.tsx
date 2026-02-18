@@ -328,27 +328,27 @@ export default function BrokerDataPage() {
 
   if (loading) {
     return (
-      <div className="bg-black text-white min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
+      <div className="min-h-screen bg-[#0a0a0b] text-white flex items-center justify-center">
+        <div className="text-center py-16"><div className="w-6 h-6 border-2 border-white/10 border-t-white/40 rounded-full animate-spin mx-auto mb-3" /><p className="text-xs text-white/30">Carregando...</p></div>
       </div>
     );
   }
 
   return (
-    <div className="bg-black text-white min-h-screen">
+    <div className="min-h-screen bg-[#0a0a0b] text-white">
       {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 sticky top-0 z-10">
-        <div className="flex items-center justify-between">
+      <header className="sticky top-0 z-10 bg-[#0a0a0b]/80 backdrop-blur-xl border-b border-white/[0.06]">
+        <div className="flex items-center justify-between px-6 py-4">
           <div className="flex items-center space-x-3">
-            <Building2 className="w-5 h-5 text-gray-400" />
+            <Building2 className="w-5 h-5 text-white/30" />
             <div>
-              <h1 className="text-lg font-semibold text-gray-200">Dados da Broker</h1>
-              <p className="text-xs text-gray-500 mt-0.5 uppercase tracking-wide">Configurar informações da broker</p>
+              <h1 className="text-base font-semibold text-white/90">Dados da Broker</h1>
+              <p className="text-[11px] text-white/30 mt-0.5">Configurar informações da broker</p>
             </div>
           </div>
           <button
             onClick={() => router.push('/admin')}
-            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-gray-300 transition-colors"
+            className="px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] rounded-lg text-[11px] font-medium text-white/70 transition-colors"
           >
             Voltar
           </button>
@@ -357,10 +357,10 @@ export default function BrokerDataPage() {
 
       {/* Content */}
       <main className="p-6">
-        <div className="bg-gray-900 border border-gray-800 rounded p-5 space-y-6">
+        <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5 space-y-6">
           {/* Nome da Broker */}
           <div>
-            <label className="block text-xs font-medium text-gray-300 mb-2 uppercase tracking-wide">
+            <label className="block text-[10px] font-semibold text-white/25 mb-2 uppercase tracking-wider">
               Nome da Broker
             </label>
             <input
@@ -368,14 +368,14 @@ export default function BrokerDataPage() {
               value={brokerData.name}
               onChange={(e) => setBrokerData(prev => ({ ...prev, name: e.target.value }))}
               placeholder="Ex: Polarium Broker"
-              className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              className="w-full px-4 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
             />
-            <p className="text-xs text-gray-500 mt-1.5">Nome que será exibido na plataforma</p>
+            <p className="text-xs text-white/30 mt-1.5">Nome que será exibido na plataforma</p>
           </div>
 
           {/* E-mail de Suporte */}
           <div>
-            <label className="block text-xs font-medium text-gray-300 mb-2 uppercase tracking-wide">
+            <label className="block text-[10px] font-semibold text-white/25 mb-2 uppercase tracking-wider">
               E-mail de Suporte
             </label>
             <input
@@ -383,14 +383,14 @@ export default function BrokerDataPage() {
               value={brokerData.supportEmail}
               onChange={(e) => setBrokerData(prev => ({ ...prev, supportEmail: e.target.value }))}
               placeholder="support@supportpolarium.com"
-              className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              className="w-full px-4 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
             />
-            <p className="text-xs text-gray-500 mt-1.5">E-mail que será exibido como contato da plataforma</p>
+            <p className="text-xs text-white/30 mt-1.5">E-mail que será exibido como contato da plataforma</p>
           </div>
 
           {/* Logo Padrão */}
           <div>
-            <label className="block text-xs font-medium text-gray-300 mb-2 uppercase tracking-wide">
+            <label className="block text-[10px] font-semibold text-white/25 mb-2 uppercase tracking-wider">
               Logo da Broker (Padrão)
             </label>
             {brokerData.logo ? (
@@ -399,19 +399,19 @@ export default function BrokerDataPage() {
                   <img
                     src={brokerData.logo}
                     alt="Logo da Broker"
-                    className="max-w-xs max-h-32 object-contain border border-gray-700 rounded"
+                    className="max-w-xs max-h-32 object-contain border border-white/[0.06] rounded-xl"
                   />
                   <button
                     onClick={handleRemoveLogoType('logo')}
-                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 rounded-full flex items-center justify-center transition-colors"
+                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-full flex items-center justify-center transition-colors"
                   >
-                    <X className="w-4 h-4 text-white" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
                 <div>
-                  <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                    <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                    <span className="text-xs text-gray-300">Trocar Logo</span>
+                  <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                    <Upload className="w-4 h-4 mr-2 text-white/40" />
+                    <span className="text-xs text-white/80">Trocar Logo</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -422,9 +422,9 @@ export default function BrokerDataPage() {
                 </div>
               </div>
             ) : (
-              <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                <span className="text-xs text-gray-300">Carregar Logo</span>
+              <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                <Upload className="w-4 h-4 mr-2 text-white/40" />
+                <span className="text-xs text-white/80">Carregar Logo</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -433,17 +433,17 @@ export default function BrokerDataPage() {
                 />
               </label>
             )}
-            <p className="text-xs text-gray-500 mt-1.5">Logo padrão (recomendado: PNG ou SVG transparente)</p>
+            <p className="text-xs text-white/30 mt-1.5">Logo padrão (recomendado: PNG ou SVG transparente)</p>
           </div>
 
           {/* Logo para Fundo Preto (Trading) */}
           <div>
-            <label className="block text-xs font-medium text-gray-300 mb-2 uppercase tracking-wide">
+            <label className="block text-[10px] font-semibold text-white/25 mb-2 uppercase tracking-wider">
               Logo para Fundo Preto (Página Trading)
             </label>
             {brokerData.logoDark ? (
               <div className="space-y-3">
-                <div className="relative inline-block bg-black p-2 rounded">
+                <div className="relative inline-block bg-black p-2 rounded-xl">
                   <img
                     src={brokerData.logoDark}
                     alt="Logo Fundo Preto"
@@ -451,15 +451,15 @@ export default function BrokerDataPage() {
                   />
                   <button
                     onClick={handleRemoveLogoType('logoDark')}
-                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 rounded-full flex items-center justify-center transition-colors"
+                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-full flex items-center justify-center transition-colors"
                   >
-                    <X className="w-4 h-4 text-white" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
                 <div>
-                  <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                    <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                    <span className="text-xs text-gray-300">Trocar Logo</span>
+                  <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                    <Upload className="w-4 h-4 mr-2 text-white/40" />
+                    <span className="text-xs text-white/80">Trocar Logo</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -470,9 +470,9 @@ export default function BrokerDataPage() {
                 </div>
               </div>
             ) : (
-              <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                <span className="text-xs text-gray-300">Carregar Logo</span>
+              <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                <Upload className="w-4 h-4 mr-2 text-white/40" />
+                <span className="text-xs text-white/80">Carregar Logo</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -481,17 +481,17 @@ export default function BrokerDataPage() {
                 />
               </label>
             )}
-            <p className="text-xs text-gray-500 mt-1.5">Logo otimizado para fundo preto (usado na página /dashboard/trading)</p>
+            <p className="text-xs text-white/30 mt-1.5">Logo otimizado para fundo preto (usado na página /dashboard/trading)</p>
           </div>
 
           {/* Logo para Fundo Branco (Profile/Login) */}
           <div>
-            <label className="block text-xs font-medium text-gray-300 mb-2 uppercase tracking-wide">
+            <label className="block text-[10px] font-semibold text-white/25 mb-2 uppercase tracking-wider">
               Logo para Fundo Branco (Páginas Profile/Login)
             </label>
             {brokerData.logoLight ? (
               <div className="space-y-3">
-                <div className="relative inline-block bg-white p-2 rounded border border-gray-700">
+                <div className="relative inline-block bg-white p-2 rounded-xl border border-white/[0.08]">
                   <img
                     src={brokerData.logoLight}
                     alt="Logo Fundo Branco"
@@ -499,15 +499,15 @@ export default function BrokerDataPage() {
                   />
                   <button
                     onClick={handleRemoveLogoType('logoLight')}
-                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 rounded-full flex items-center justify-center transition-colors"
+                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-full flex items-center justify-center transition-colors"
                   >
-                    <X className="w-4 h-4 text-white" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
                 <div>
-                  <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                    <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                    <span className="text-xs text-gray-300">Trocar Logo</span>
+                  <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                    <Upload className="w-4 h-4 mr-2 text-white/40" />
+                    <span className="text-xs text-white/80">Trocar Logo</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -518,9 +518,9 @@ export default function BrokerDataPage() {
                 </div>
               </div>
             ) : (
-              <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                <span className="text-xs text-gray-300">Carregar Logo</span>
+              <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                <Upload className="w-4 h-4 mr-2 text-white/40" />
+                <span className="text-xs text-white/80">Carregar Logo</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -529,12 +529,12 @@ export default function BrokerDataPage() {
                 />
               </label>
             )}
-            <p className="text-xs text-gray-500 mt-1.5">Logo otimizado para fundo branco (usado nas páginas /profile e /login)</p>
+            <p className="text-xs text-white/30 mt-1.5">Logo otimizado para fundo branco (usado nas páginas /profile e /login)</p>
           </div>
 
           {/* Favicon */}
           <div>
-            <label className="block text-xs font-medium text-gray-300 mb-2 uppercase tracking-wide">
+            <label className="block text-[10px] font-semibold text-white/25 mb-2 uppercase tracking-wider">
               Favicon
             </label>
             {brokerData.favicon ? (
@@ -543,19 +543,19 @@ export default function BrokerDataPage() {
                   <img
                     src={brokerData.favicon}
                     alt="Favicon"
-                    className="w-16 h-16 object-contain border border-gray-700 rounded"
+                    className="w-16 h-16 object-contain border border-white/[0.06] rounded-xl"
                   />
                   <button
                     onClick={handleRemoveLogoType('favicon')}
-                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 rounded-full flex items-center justify-center transition-colors"
+                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-full flex items-center justify-center transition-colors"
                   >
-                    <X className="w-4 h-4 text-white" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
                 <div>
-                  <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                    <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                    <span className="text-xs text-gray-300">Trocar Favicon</span>
+                  <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                    <Upload className="w-4 h-4 mr-2 text-white/40" />
+                    <span className="text-xs text-white/80">Trocar Favicon</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -566,9 +566,9 @@ export default function BrokerDataPage() {
                 </div>
               </div>
             ) : (
-              <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                <span className="text-xs text-gray-300">Carregar Favicon</span>
+              <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                <Upload className="w-4 h-4 mr-2 text-white/40" />
+                <span className="text-xs text-white/80">Carregar Favicon</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -577,17 +577,17 @@ export default function BrokerDataPage() {
                 />
               </label>
             )}
-            <p className="text-xs text-gray-500 mt-1.5">Favicon da plataforma (recomendado: 32x32 ou 16x16 pixels, formato ICO ou PNG)</p>
+            <p className="text-xs text-white/30 mt-1.5">Favicon da plataforma (recomendado: 32x32 ou 16x16 pixels, formato ICO ou PNG)</p>
           </div>
 
           {/* Marca d'água para Gráfico */}
           <div>
-            <label className="block text-xs font-medium text-gray-300 mb-2 uppercase tracking-wide">
+            <label className="block text-[10px] font-semibold text-white/25 mb-2 uppercase tracking-wider">
               Marca d'água (Gráfico)
             </label>
             {brokerData.watermark ? (
               <div className="space-y-3">
-                <div className="relative inline-block bg-black p-2 rounded border border-gray-700">
+                <div className="relative inline-block bg-black p-2 rounded-xl border border-white/[0.08]">
                   <img
                     src={brokerData.watermark}
                     alt="Marca d'água"
@@ -595,15 +595,15 @@ export default function BrokerDataPage() {
                   />
                   <button
                     onClick={handleRemoveLogoType('watermark')}
-                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 rounded-full flex items-center justify-center transition-colors"
+                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-full flex items-center justify-center transition-colors"
                   >
-                    <X className="w-4 h-4 text-white" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
                 <div>
-                  <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                    <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                    <span className="text-xs text-gray-300">Trocar Marca d'água</span>
+                  <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                    <Upload className="w-4 h-4 mr-2 text-white/40" />
+                    <span className="text-xs text-white/80">Trocar Marca d'água</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -614,9 +614,9 @@ export default function BrokerDataPage() {
                 </div>
               </div>
             ) : (
-              <label className="inline-flex items-center px-4 py-2 bg-gray-800 border border-gray-700 rounded cursor-pointer hover:bg-gray-700 transition-colors">
-                <Upload className="w-4 h-4 mr-2 text-gray-400" />
-                <span className="text-xs text-gray-300">Carregar Marca d'água</span>
+              <label className="inline-flex items-center px-4 py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg cursor-pointer transition-colors">
+                <Upload className="w-4 h-4 mr-2 text-white/40" />
+                <span className="text-xs text-white/80">Carregar Marca d'água</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -625,15 +625,15 @@ export default function BrokerDataPage() {
                 />
               </label>
             )}
-            <p className="text-xs text-gray-500 mt-1.5">Imagem que será exibida como marca d'água no fundo do gráfico (formato PNG ou SVG transparente recomendado)</p>
+            <p className="text-xs text-white/30 mt-1.5">Imagem que será exibida como marca d'água no fundo do gráfico (formato PNG ou SVG transparente recomendado)</p>
           </div>
 
           {/* Botão Salvar */}
-          <div className="pt-4 border-t border-gray-800">
+          <div className="pt-4 border-t border-white/[0.06]">
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center space-x-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50 rounded text-xs font-medium text-gray-300 transition-colors"
+              className="flex items-center space-x-2 px-4 py-2 bg-white/[0.08] hover:bg-white/[0.12] border border-white/[0.08] disabled:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-50 rounded-xl text-xs font-semibold text-white/80 transition-colors"
             >
               <Save className="w-4 h-4" />
               <span>{saving ? 'Salvando...' : 'Salvar Alterações'}</span>

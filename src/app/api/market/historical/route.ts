@@ -41,8 +41,13 @@ export async function GET(request: NextRequest) {
       // Mercado fechado: gerar candles OTC sintéticos
       return await generateOTCHistorical(symbol, category, timeframe, limit);
     } else {
-      // Mercado aberto: buscar dados reais do Twelve Data
-      return await fetchTwelveDataHistorical(symbol, timeframe, limit);
+      // Mercado aberto: tentar dados reais, fallback para OTC se falhar
+      try {
+        return await fetchTwelveDataHistorical(symbol, timeframe, limit);
+      } catch (twelveDataError: any) {
+        console.warn(`[API] TwelveData falhou para ${symbol}, usando OTC histórico como fallback:`, twelveDataError?.message || 'Unknown');
+        return await generateOTCHistorical(symbol, category, timeframe, limit);
+      }
     }
   } catch (error: any) {
     console.error('[API] Error:', error instanceof Error ? error.message : 'Unknown');
@@ -282,18 +287,8 @@ async function fetchTwelveDataHistorical(
 
     return NextResponse.json({ candles });
   } catch (error: any) {
-    console.error('[API] Error:', error instanceof Error ? error.message : 'Unknown');
-    
-    // Se o erro for sobre símbolo inválido, retornar array vazio em vez de erro
-    const errorMessage = error.message || 'Twelve Data API error';
-    if (errorMessage.includes('symbol') || errorMessage.includes('invalid') || errorMessage.includes('missing') || errorMessage.includes('figi')) {
-      return NextResponse.json({ candles: [] });
-    }
-    
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    );
+    // Relançar para que o handler principal faça fallback para OTC
+    throw error;
   }
 }
 
@@ -319,9 +314,13 @@ async function generateOTCHistorical(
     let basePrice = 0;
     const apiKey = process.env.TWELVEDATA_API_KEY || '';
     if (apiKey) {
+      // Tentar 1: time_series (1 candle diário)
       try {
         const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1day&outputsize=1&timezone=UTC&apikey=${apiKey}&format=json`;
-        const response = await fetch(url);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (response.ok) {
           const data: any = await response.json();
           if (data.values && data.values.length > 0) {
@@ -329,23 +328,48 @@ async function generateOTCHistorical(
           }
         }
       } catch (e) {
-        // Fallback to defaults below
+        // Fallback to price endpoint below
+      }
+      
+      // Tentar 2: /price endpoint (mais leve, usa menos créditos)
+      if (!basePrice || !isFinite(basePrice)) {
+        try {
+          const priceUrl = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
+          const controller2 = new AbortController();
+          const timeoutId2 = setTimeout(() => controller2.abort(), 5000);
+          const priceRes = await fetch(priceUrl, { signal: controller2.signal });
+          clearTimeout(timeoutId2);
+          if (priceRes.ok) {
+            const priceData: any = await priceRes.json();
+            if (priceData.price) {
+              const p = parseFloat(priceData.price);
+              if (isFinite(p) && p > 0) basePrice = p;
+            }
+          }
+        } catch (e) {
+          // Fallback to defaults below
+        }
       }
     }
     
-    // Fallback: preços padrão
+    // Fallback: preços padrão hardcoded
     if (!basePrice || !isFinite(basePrice)) {
       const defaults: Record<string, number> = {
+        // Forex
         'EUR/USD': 1.0850, 'GBP/USD': 1.2700, 'USD/JPY': 149.50,
         'AUD/CAD': 0.8950, 'AUD/USD': 0.6550, 'USD/CAD': 1.3600,
         'EUR/GBP': 0.8550, 'EUR/JPY': 162.50, 'GBP/JPY': 190.00,
-        'USD/BRL': 4.9500, 'XAU/USD': 2050.00, 'XAG/USD': 23.50,
+        'USD/BRL': 4.9500, 'NZD/USD': 0.6250, 'USD/CHF': 0.8750,
+        // Commodities
+        'XAU/USD': 2050.00, 'XAG/USD': 23.50,
         'WTI/USD': 78.50, 'XBR/USD': 82.00, 'NG/USD': 2.85,
-        'XPT/USD': 920.00, 'AAPL': 185.00, 'GOOGL': 142.00,
-        'MSFT': 415.00, 'AMZN': 178.00, 'TSLA': 195.00,
-        'META': 485.00, 'NVDA': 720.00, 'SPX': 5050.00,
-        'IXIC': 15900.00, 'DJI': 38900.00, 'FTSE': 7650.00,
-        'DAX': 17100.00, 'N225': 36500.00,
+        'XPT/USD': 920.00,
+        // Ações (stocks)
+        'AAPL': 264.00, 'GOOGL': 185.00, 'MSFT': 397.00,
+        'AMZN': 201.00, 'TSLA': 411.00, 'META': 639.00, 'NVDA': 185.00,
+        // Índices
+        'SPX': 5800.00, 'IXIC': 18500.00, 'DJI': 43000.00,
+        'FTSE': 8400.00, 'DAX': 18500.00, 'N225': 38000.00,
       };
       basePrice = defaults[symbol] || 100;
     }

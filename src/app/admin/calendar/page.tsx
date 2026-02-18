@@ -366,19 +366,19 @@ export default function CalendarAdminPage() {
   }, {} as Record<string, EconomicEvent[]>);
 
   return (
-    <div className="bg-black text-white">
+    <div className="min-h-screen bg-[#0a0a0b] text-white">
       {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 sticky top-0 z-10">
-        <div className="flex items-center justify-between">
+      <header className="sticky top-0 z-10 bg-[#0a0a0b]/80 backdrop-blur-xl border-b border-white/[0.06]">
+        <div className="flex items-center justify-between px-6 py-4">
           <div>
-            <h1 className="text-lg font-semibold text-gray-200">Calendário Econômico</h1>
-            <p className="text-xs text-gray-500 mt-0.5 uppercase tracking-wide">Gerencie eventos econômicos e bancos centrais</p>
+            <h1 className="text-base font-semibold text-white/90">Calendário Econômico</h1>
+            <p className="text-[11px] text-white/30 mt-0.5">Gerencie eventos econômicos e bancos centrais</p>
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={handleSyncAPI}
               disabled={syncing}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center space-x-2 px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] rounded-lg text-[11px] font-medium text-white/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
               <span>{syncing ? 'Sincronizando...' : 'Sincronizar API'}</span>
@@ -389,7 +389,7 @@ export default function CalendarAdminPage() {
                 setEditingEvent(null);
                 setShowModal(true);
               }}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs font-medium text-gray-300 transition-colors"
+              className="flex items-center space-x-2 px-3 py-1.5 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] rounded-lg text-[11px] font-medium text-white/70 transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Novo Evento</span>
@@ -404,13 +404,13 @@ export default function CalendarAdminPage() {
         <div className="mb-6 flex items-center space-x-4">
           <div className="flex-1">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Buscar eventos..."
-                className="w-full pl-10 pr-4 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-700"
+                className="w-full pl-10 pr-4 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
               />
             </div>
           </div>
@@ -418,7 +418,7 @@ export default function CalendarAdminPage() {
             <select
               value={filterCategory}
               onChange={(e) => setFilterCategory(e.target.value)}
-              className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+              className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
             >
               <option value="all">Todas as categorias</option>
               <option value="economic">Econômico</option>
@@ -429,10 +429,10 @@ export default function CalendarAdminPage() {
         </div>
 
         {loading ? (
-          <div className="text-center py-12 text-gray-500 text-sm">Carregando...</div>
+          <div className="text-center py-16"><div className="w-6 h-6 border-2 border-white/10 border-t-white/40 rounded-full animate-spin mx-auto mb-3" /><p className="text-xs text-white/30">Carregando...</p></div>
         ) : Object.keys(groupedEvents).length === 0 ? (
-          <div className="bg-gray-900 border border-gray-800 rounded p-6 text-center">
-            <p className="text-sm text-gray-500">
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-6 text-center">
+            <p className="text-sm text-white/30">
               {searchTerm || filterCategory !== 'all' ? 'Nenhum evento encontrado com os filtros aplicados' : 'Nenhum evento cadastrado'}
             </p>
           </div>
@@ -441,9 +441,9 @@ export default function CalendarAdminPage() {
             {Object.entries(groupedEvents)
               .sort(([a], [b]) => a.localeCompare(b))
               .map(([date, dateEvents]) => (
-                <div key={date} className="bg-gray-900 border border-gray-800 rounded overflow-hidden">
-                  <div className="px-4 py-3 bg-gray-800 border-b border-gray-700">
-                    <h3 className="text-xs font-semibold text-gray-200 uppercase">
+                <div key={date} className="bg-white/[0.02] border border-white/[0.06] rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/[0.06]">
+                    <h3 className="text-xs font-semibold text-white/90 uppercase">
                       {new Date(date).toLocaleDateString('pt-BR', {
                         day: '2-digit',
                         month: 'long',
@@ -451,9 +451,9 @@ export default function CalendarAdminPage() {
                       })}
                     </h3>
                   </div>
-                  <div className="divide-y divide-gray-800">
+                  <div className="divide-y divide-white/[0.03]">
                     {dateEvents.map((event) => (
-                      <div key={event.id} className="px-4 py-3 hover:bg-gray-800/50 transition-colors">
+                      <div key={event.id} className="px-4 py-3 hover:bg-white/[0.02] transition-colors">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-3 flex-1">
                             <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm">
@@ -461,17 +461,17 @@ export default function CalendarAdminPage() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center space-x-2 mb-1">
-                                <span className="text-xs text-gray-400">{event.country}</span>
-                                <span className="px-2 py-0.5 rounded text-[10px] bg-gray-800 text-gray-400">
+                                <span className="text-xs text-white/30">{event.country}</span>
+                                <span className="px-2 py-0.5 rounded text-[10px] bg-white/[0.06] text-white/30">
                                   {event.category === 'central_bank' ? 'Banco Central' : event.category === 'economic' ? 'Econômico' : 'Político'}
                                 </span>
                               </div>
-                              <p className="text-sm font-medium text-gray-200">{event.event}</p>
+                              <p className="text-sm font-medium text-white/80">{event.event}</p>
                             </div>
                           </div>
                           <div className="flex items-center space-x-4 flex-shrink-0 ml-4">
                             <div className="text-right">
-                              <p className="text-xs text-gray-400">{event.time}</p>
+                              <p className="text-xs text-white/30">{event.time}</p>
                               <div className="flex items-center space-x-0.5 mt-1">
                                 <span className="text-red-400 text-xs">{getImportanceDots(event.importance)}</span>
                               </div>
@@ -479,14 +479,14 @@ export default function CalendarAdminPage() {
                             <div className="flex items-center space-x-2">
                               <button
                                 onClick={() => handleEdit(event)}
-                                className="p-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-gray-300 transition-colors"
+                                className="p-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-white/40 transition-colors"
                                 title="Editar"
                               >
                                 <Edit className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 onClick={() => handleDelete(event.id)}
-                                className="p-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-gray-300 transition-colors"
+                                className="p-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded-lg text-white/40 transition-colors"
                                 title="Deletar"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -506,10 +506,10 @@ export default function CalendarAdminPage() {
       {/* Modal de Criação/Edição */}
       {showModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-black border border-gray-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar">
+          <div className="bg-[#111113] border border-white/[0.08] rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar">
             <div className="p-6">
-              <div className="flex items-center justify-between mb-6 border-b border-gray-800 pb-4">
-                <h2 className="text-lg font-semibold text-gray-200">
+              <div className="flex items-center justify-between mb-6 border-b border-white/[0.06] pb-4">
+                <h2 className="text-sm font-semibold text-white/90">
                   {editingEvent ? 'Editar Evento' : 'Novo Evento'}
                 </h2>
                 <button
@@ -518,31 +518,31 @@ export default function CalendarAdminPage() {
                     setEditingEvent(null);
                     resetForm();
                   }}
-                  className="p-1.5 hover:bg-gray-800 rounded transition-colors"
+                  className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors"
                 >
-                  <X className="w-4 h-4 text-gray-400" />
+                  <X className="w-4 h-4 text-white/30" />
                 </button>
               </div>
 
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">País</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">País</label>
                     <input
                       type="text"
                       value={formData.country}
                       onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
                       placeholder="Ex: Estados Unidos"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Código do País</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Código do País</label>
                     <select
                       value={formData.countryCode}
                       onChange={(e) => setFormData({ ...formData, countryCode: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
                     >
                       {countryCodes.map((c) => (
                         <option key={c.code} value={c.code}>
@@ -554,43 +554,43 @@ export default function CalendarAdminPage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Nome do Evento</label>
+                  <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Nome do Evento</label>
                   <input
                     type="text"
                     value={formData.event}
                     onChange={(e) => setFormData({ ...formData, event: e.target.value })}
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                    className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
                     placeholder="Ex: Discurso de Fed Bostic"
                   />
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Data</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Data</label>
                     <input
                       type="date"
                       value={formData.date}
                       onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Horário</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Horário</label>
                     <input
                       type="time"
                       value={formData.time}
                       onChange={(e) => setFormData({ ...formData, time: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Importância</label>
+                    <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Importância</label>
                     <select
                       value={formData.importance}
                       onChange={(e) => setFormData({ ...formData, importance: parseInt(e.target.value) as 1 | 2 | 3 })}
-                      className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
                     >
                       <option value={1}>Baixa (1)</option>
                       <option value={2}>Média (2)</option>
@@ -600,11 +600,11 @@ export default function CalendarAdminPage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium mb-1.5 text-gray-400 uppercase tracking-wide">Categoria</label>
+                  <label className="block text-[10px] font-semibold mb-1.5 text-white/25 uppercase tracking-wider">Categoria</label>
                   <select
                     value={formData.category}
                     onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
-                    className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-200 focus:outline-none focus:border-gray-700"
+                    className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
                   >
                     <option value="economic">Econômico</option>
                     <option value="central_bank">Banco Central</option>
@@ -612,10 +612,10 @@ export default function CalendarAdminPage() {
                   </select>
                 </div>
 
-                <div className="flex items-center space-x-2 pt-4 border-t border-gray-800">
+                <div className="flex items-center space-x-2 pt-4 border-t border-white/[0.06]">
                   <button
                     onClick={handleSave}
-                    className="flex-1 flex items-center justify-center space-x-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-sm font-medium text-gray-300 transition-colors"
+                    className="flex-1 flex items-center justify-center space-x-2 px-4 py-2 bg-white/[0.08] hover:bg-white/[0.12] border border-white/[0.08] rounded-xl text-xs font-semibold text-white/80 transition-colors"
                   >
                     <Save className="w-3.5 h-3.5" />
                     <span>Salvar</span>
@@ -626,7 +626,7 @@ export default function CalendarAdminPage() {
                       setEditingEvent(null);
                       resetForm();
                     }}
-                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-sm font-medium text-gray-300 transition-colors"
+                    className="px-4 py-2 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] rounded-xl text-xs font-medium text-white/40 transition-colors"
                   >
                     Cancelar
                   </button>

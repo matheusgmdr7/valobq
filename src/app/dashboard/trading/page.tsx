@@ -222,6 +222,7 @@ const TradingPage: React.FC = () => {
   const processedTradeIdsRef = useRef<Set<string>>(new Set()); // IDs de trades já processados
   const [closedSnapshots, setClosedSnapshots] = useState<Set<string>>(new Set()); // IDs de snapshots fechados pelo usuário
   const [currentPrice, setCurrentPrice] = useState<number>(0);
+  const lastKnownPricesRef = useRef<Map<string, number>>(new Map());
   const [availablePairs, setAvailablePairs] = useState<string[]>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -351,16 +352,66 @@ const TradingPage: React.FC = () => {
   const [promoCode, setPromoCode] = useState(''); // Código promocional
   const [cpf, setCpf] = useState(''); // CPF do usuário
   const [acceptedTerms, setAcceptedTerms] = useState(false); // Aceitar termos
-  const [processedDepositIds, setProcessedDepositIds] = useState<Set<string>>(new Set()); // IDs de depósitos já processados
-  const [showPixPaymentModal, setShowPixPaymentModal] = useState(false); // Modal com QR code PIX
+  const [processedDepositIds, setProcessedDepositIds] = useState<Set<string>>(() => {
+    // Carregar IDs processados do localStorage para evitar toasts repetidos após reload
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('processed_deposit_ids');
+        if (saved) return new Set(JSON.parse(saved));
+      } catch { /* ignorar */ }
+    }
+    return new Set();
+  }); // IDs de depósitos já processados
+  const [showPixPaymentModal, setShowPixPaymentModal] = useState(false);
   const [pixPaymentData, setPixPaymentData] = useState<{
     qrCode: string;
     paymentImage: string;
     amount: number;
     externalId: string;
-    depositId?: string; // ID do depósito no banco
-  } | null>(null); // Dados do pagamento PIX
-  const [depositPaymentStatus, setDepositPaymentStatus] = useState<'pending' | 'completed' | null>(null); // Status do pagamento
+    depositId?: string;
+    totalAmount?: number;
+    totalParts?: number;
+    currentPart?: number;
+    allOrders?: Array<{ depositId: string; qrCode: string; paymentImage: string; amount: number; externalId: string; }>;
+  } | null>(() => {
+    // Restaurar dados PIX pendentes do localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('pending_pix_payment');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          // Verificar se os dados não são muito antigos (max 30 minutos)
+          if (parsed._savedAt && Date.now() - parsed._savedAt < 1800000) {
+            const { _savedAt, ...data } = parsed;
+            return data;
+          } else {
+            localStorage.removeItem('pending_pix_payment');
+          }
+        }
+      } catch { /* ignorar */ }
+    }
+    return null;
+  });
+  const [depositPaymentStatus, setDepositPaymentStatus] = useState<'pending' | 'completed' | null>(null);
+
+  // Persistir dados PIX no localStorage quando mudar
+  useEffect(() => {
+    if (pixPaymentData && pixPaymentData.depositId) {
+      try {
+        localStorage.setItem('pending_pix_payment', JSON.stringify({ ...pixPaymentData, _savedAt: Date.now() }));
+      } catch { /* ignorar */ }
+    } else {
+      try { localStorage.removeItem('pending_pix_payment'); } catch { /* ignorar */ }
+    }
+  }, [pixPaymentData]);
+
+  // Auto-abrir modal se houver dados PIX pendentes restaurados
+  useEffect(() => {
+    if (pixPaymentData && !showPixPaymentModal && depositPaymentStatus !== 'completed') {
+      setShowPixPaymentModal(true);
+      setDepositPaymentStatus('pending');
+    }
+  }, []);
   const [userPhoto, setUserPhoto] = useState<string | null>(() => {
     // Carregar foto do usuário do localStorage se existir
     if (typeof window !== 'undefined') {
@@ -596,23 +647,41 @@ const TradingPage: React.FC = () => {
     requestAnimationFrame(animate);
   };
 
-  // Função processTradeResult - Alta Performance (chamada no loop de 60 FPS)
+  // Função processTradeResult - Fonte única de verdade: Backend
   const processTradeResult = async (trade: Trade) => {
-    // Evitar processar o mesmo trade múltiplas vezes
     if (processedTradeIdsRef.current.has(trade.id)) {
       return;
     }
     processedTradeIdsRef.current.add(trade.id);
 
-    // 1. Congelar o preço final para evitar discrepâncias visuais
-    const finalPrice = chartRef.current?.getCurrentPrice() || trade.entryPrice;
+    // 1. Obter preço de saída correto para o SÍMBOLO DA TRADE (não do gráfico atual)
+    let finalPrice: number;
+    const isCurrentSymbol = trade.symbol === selectedAsset;
     
-    // 2. Cálculo imediato do resultado (Lógica de Frontend)
-    const isWin = trade.type === 'call' ? finalPrice > trade.entryPrice : finalPrice < trade.entryPrice;
-    const isDraw = finalPrice === trade.entryPrice;
+    if (isCurrentSymbol && chartRef.current) {
+      finalPrice = chartRef.current.getCurrentPrice();
+    } else {
+      finalPrice = lastKnownPricesRef.current.get(trade.symbol) || 0;
+    }
+    
+    // Se não temos preço válido, não podemos resolver a trade
+    if (!finalPrice || finalPrice <= 0 || !isFinite(finalPrice)) {
+      console.warn(`[Trade] Sem preço válido para ${trade.symbol}, adiando resolução (finalPrice=${finalPrice})`);
+      processedTradeIdsRef.current.delete(trade.id);
+      return;
+    }
+    
+    // 2. Cálculo do resultado com tolerância para empate (evita falhas de floating-point)
+    const priceDiff = finalPrice - trade.entryPrice;
+    const epsilon = trade.entryPrice * 0.000001; // 0.0001% de tolerância
+    const isDraw = Math.abs(priceDiff) < epsilon;
+    const isWin = isDraw ? false : (trade.type === 'call' ? priceDiff > 0 : priceDiff < 0);
+    
+    const payoutPercent = 0.88;
+    
+    console.log(`[Trade Result] ${trade.id.slice(0, 8)} | ${trade.symbol} | ${trade.type.toUpperCase()} | Entry: ${trade.entryPrice} | Exit: ${finalPrice} | Diff: ${priceDiff.toFixed(6)} | ${isDraw ? 'DRAW' : (isWin ? 'WIN' : 'LOSS')} | Fonte: ${isCurrentSymbol ? 'chart' : 'cache'}`);
     
     // 3. Atualizar trade local com resultado
-    const payoutPercent = 0.88; // 88% payout (consistente com tradeService)
     const updatedTrade: Trade = {
       ...trade,
       exitPrice: finalPrice,
@@ -620,11 +689,9 @@ const TradingPage: React.FC = () => {
       profit: isDraw ? 0 : (isWin ? trade.amount * payoutPercent : -trade.amount),
     };
     
-    // Atualizar no array local
     setLocalActiveTrades(prev => prev.map(t => t.id === trade.id ? updatedTrade : t));
     localActiveTradesRef.current = localActiveTradesRef.current.map(t => t.id === trade.id ? updatedTrade : t);
     
-    // Salvar resultado no card do ativo (se não for o ativo atualmente selecionado, persiste visualmente)
     if (!isDraw) {
       const resultData = {
         result: isWin ? 'win' as const : 'loss' as const,
@@ -634,15 +701,14 @@ const TradingPage: React.FC = () => {
       setTradeResults(prev => ({ ...prev, [trade.symbol]: resultData }));
     }
     
-    // 4. Feedback Sonoro e Visual Instantâneo
+    // 4. Feedback Sonoro e Visual
     if (!isDraw) {
       if (isWin) {
         playWin();
       } else {
         playLoss();
       }
-      // Toast customizado de resultado
-      const profit = isWin ? trade.amount * payoutPercent : trade.amount;
+      const profitDisplay = isWin ? trade.amount * payoutPercent : trade.amount;
       toast.custom((t) => (
         <div
           className={`${
@@ -672,7 +738,7 @@ const TradingPage: React.FC = () => {
             </div>
             <div className="flex items-baseline space-x-2 mt-0.5">
               <span className="text-base font-bold text-white">
-                {isWin ? '+' : '-'}R$ {profit.toFixed(2)}
+                {isWin ? '+' : '-'}R$ {profitDisplay.toFixed(2)}
               </span>
               <span className="text-[10px] text-gray-400">
                 {trade.symbol}
@@ -695,38 +761,63 @@ const TradingPage: React.FC = () => {
       });
     }
     
-    // 5. Sincronização com o Backend e Atualização de Saldo
+    // 5. Sincronizar com Backend (fonte de verdade para o banco de dados)
+    // O backend recalcula win/loss com o mesmo exitPrice para garantir consistência
     try {
       const result = await tradeService.calculateTradeResult(trade.id, finalPrice);
-      if (result.success && result.trade.profit !== undefined && user) {
-        // Ler saldo ATUAL do ref (evita stale closure)
+      
+      if (result.success && user) {
+        const backendResult = result.trade.result;
+        const backendProfit = result.trade.profit || 0;
         const currentBalance = activeBalanceRef.current;
         
-        // FLUXO: Na execução, o investimento já foi DESCONTADO do saldo
-        // Se ganhou: devolver investimento + adicionar lucro (amount + amount * 0.88)
-        // Se perdeu: saldo já está correto (investimento já foi descontado)
-        // Se empatou: devolver o investimento (amount)
+        // USAR O RESULTADO DO BACKEND para atualizar o saldo (fonte de verdade)
+        // Na abertura, o investimento já foi DESCONTADO
+        let newBalance: number;
+        if (isDraw) {
+          newBalance = currentBalance + trade.amount;
+        } else if (backendResult === 'win') {
+          newBalance = currentBalance + trade.amount + backendProfit;
+        } else {
+          newBalance = currentBalance;
+        }
+        
+        console.log(`[Trade Balance] ${trade.id.slice(0, 8)} | Backend: ${backendResult} | Profit: ${backendProfit} | Balance: ${currentBalance} → ${newBalance}`);
+        
+        if (newBalance !== currentBalance) {
+          animateBalance(currentBalance, newBalance);
+        }
+        
+        // Se o backend discordou do frontend, corrigir o estado local
+        if (backendResult && backendResult !== updatedTrade.result) {
+          console.warn(`[Trade] DIVERGÊNCIA! Frontend: ${updatedTrade.result} | Backend: ${backendResult} | Usando backend.`);
+          const correctedTrade: Trade = {
+            ...updatedTrade,
+            result: backendResult,
+            profit: backendProfit,
+          };
+          setLocalActiveTrades(prev => prev.map(t => t.id === trade.id ? correctedTrade : t));
+          localActiveTradesRef.current = localActiveTradesRef.current.map(t => t.id === trade.id ? correctedTrade : t);
+        }
+      }
+    } catch (error) {
+      console.error('[Trade] Erro ao sincronizar com backend:', error instanceof Error ? error.message : 'Unknown');
+      // Fallback: usar resultado do frontend para atualizar saldo
+      if (user) {
+        const currentBalance = activeBalanceRef.current;
         let newBalance: number;
         if (isDraw) {
           newBalance = currentBalance + trade.amount;
         } else if (isWin) {
-          newBalance = currentBalance + trade.amount + (result.trade.profit || 0);
+          newBalance = currentBalance + trade.amount + (trade.amount * payoutPercent);
         } else {
-          // Perdeu: saldo já descontado na abertura — não alterar
           newBalance = currentBalance;
         }
-        
-        // Atualizar saldo com animação (persiste no banco via updateBalance)
         if (newBalance !== currentBalance) {
           animateBalance(currentBalance, newBalance);
         }
       }
-    } catch (error) {
-      console.error('Error:', error instanceof Error ? error.message : 'Unknown');
     }
-    
-    // 6. Snapshot permanece aberto até ser fechado manualmente pelo usuário
-    // Removido setTimeout - o snapshot só será removido quando o usuário clicar no botão de fechar
   };
 
   // Loop de 60 FPS para verificar trades expirados (substitui verificação de 5 segundos)
@@ -961,247 +1052,146 @@ const TradingPage: React.FC = () => {
     loadPaymentGateways();
   }, []);
 
-  // Verificar periodicamente status de depósitos na API HorsePay
-  // Verifica depósitos pendentes E aprovados recentes (últimos 60 minutos) para garantir sincronização com gateway
+  // Persistir IDs de depósitos processados no localStorage
+  useEffect(() => {
+    if (processedDepositIds.size > 0) {
+      try {
+        localStorage.setItem('processed_deposit_ids', JSON.stringify([...processedDepositIds]));
+      } catch { /* ignorar */ }
+    }
+  }, [processedDepositIds]);
+
+  // Verificar periodicamente status de depósitos via API server-side
+  // O server consulta HorsePay (GET /api/orders/deposit/{id}) e também verifica webhook
   useEffect(() => {
     if (!user || !supabase) return;
 
-    const checkPendingDepositsStatus = async () => {
+    const checkDepositStatus = async () => {
       try {
-        // Calcular data limite: últimos 60 minutos para verificar depósitos recentes
-        const sixtyMinutesAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-        
-        // Buscar depósitos pendentes E aprovados recentes que têm transaction_id (PIX/HorsePay)
-        // Verificamos ambos para corrigir inconsistências (approved incorreto ou pending concluído)
-        const { data: pendingDeposits, error } = await supabase
-          .from('deposits')
-          .select('id, amount, status, transaction_id, method, admin_notes, created_at')
-          .eq('user_id', user.id)
-          .in('status', ['pending', 'approved'])
-          .not('transaction_id', 'is', null)
-          .gte('created_at', sixtyMinutesAgo)
-          .order('created_at', { ascending: false });
+        const response = await fetch('/api/deposits/check-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: user.id }),
+        });
 
-        if (error) {
-          console.error('Error:', error instanceof Error ? error.message : 'Unknown');
-          return;
-        }
+        if (!response.ok) return;
 
-        if (!pendingDeposits || pendingDeposits.length === 0) {
-          return;
-        }
+        const result = await response.json();
 
-        // Para cada depósito pendente, verificar status na API HorsePay
-        for (const deposit of pendingDeposits) {
-          // Evitar processar se já foi marcado como processado
-          if (processedDepositIds.has(deposit.id)) {
-            continue;
-          }
+        // Depósitos recém-confirmados pelo HorsePay neste ciclo — mostrar toast
+        if (result.updated && result.updated.length > 0) {
+          for (const deposit of result.updated) {
+            if (processedDepositIds.has(deposit.id)) continue;
 
-          // Buscar gateway configurado para este método de pagamento
-          const { data: gateways, error: gatewayError } = await supabase
-            .from('payment_gateways')
-            .select('*')
-            .eq('type', deposit.method)
-            .eq('is_active', true)
-            .limit(1);
+            const depositAmount = parseFloat(deposit.amount.toString());
+            setProcessedDepositIds(prev => new Set(prev).add(deposit.id));
 
-          if (gatewayError || !gateways || gateways.length === 0) {
-            continue;
-          }
+            toast.custom((t) => (
+              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                style={{ background: 'linear-gradient(135deg, #052e16 0%, #064e3b 100%)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', padding: '14px 18px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', minWidth: '240px', maxWidth: '340px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(34,197,94,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                  <div>
+                    <p style={{ color: '#d1fae5', fontSize: '13px', fontWeight: 600, margin: 0 }}>Depósito confirmado</p>
+                    <p style={{ color: '#86efac', fontSize: '12px', fontWeight: 400, margin: '2px 0 0 0', opacity: 0.8 }}>{formatCurrency(depositAmount)} creditado ao saldo</p>
+                  </div>
+                </div>
+              </div>
+            ), { duration: 5000, position: 'top-right' });
 
-          const gatewayData = gateways[0];
-
-          // Verificar se é gateway PIX (HorsePay)
-          if (gatewayData.type === 'pix' && gatewayData.api_key_encrypted && gatewayData.api_secret_encrypted) {
-            try {
-              // Autenticar na API HorsePay
-              const clientKey = atob(gatewayData.api_key_encrypted);
-              const clientSecret = atob(gatewayData.api_secret_encrypted);
-              const gatewayConfig = gatewayData.config || {};
-              const apiBaseUrl = gatewayConfig.api_base_url || gatewayData.api_base_url || 'https://api.horsepay.io';
-
-              const authResponse = await fetch(`${apiBaseUrl}/auth/token`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  client_key: clientKey,
-                  client_secret: clientSecret,
-                }),
-              });
-
-              if (!authResponse.ok) {
-                continue;
-              }
-
-              const authData = await authResponse.json();
-              const accessToken = authData.access_token;
-
-              // Verificar status da transação usando o transaction_id (external_id)
-              // Tentar diferentes formatos de endpoint
-              let statusResponse;
-              
-              // Primeiro, tentar GET /transaction/{id}
-              statusResponse = await fetch(`${apiBaseUrl}/transaction/${deposit.transaction_id}`, {
-                method: 'GET',
-                headers: {
-                  'Authorization': `Bearer ${accessToken}`,
-                  'Content-Type': 'application/json',
-                },
-              });
-
-              // Se não funcionar, tentar GET /transaction/status/{id} ou /transaction/check/{id}
-              if (!statusResponse.ok && statusResponse.status === 404) {
-                statusResponse = await fetch(`${apiBaseUrl}/transaction/status/${deposit.transaction_id}`, {
-                  method: 'GET',
-                  headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json',
-                  },
-                });
-              }
-
-              if (!statusResponse.ok) {
-                // Se ainda não funcionar, tentar /transaction/check/{id}
-                statusResponse = await fetch(`${apiBaseUrl}/transaction/check/${deposit.transaction_id}`, {
-                  method: 'GET',
-                  headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json',
-                  },
-                });
-              }
-
-              if (!statusResponse.ok) {
-                continue;
-              }
-
-              const transactionData = await statusResponse.json();
-
-              // Verificar status na API da gateway
-              // Status concluído: "concluida", "completed", "paid", ou 1
-              // Status não concluído: "ativa", "pending", "waiting", etc.
-              const gatewayStatus = transactionData.status?.toString().toLowerCase() || 
-                                   transactionData.payment_status?.toString().toLowerCase() || 
-                                   transactionData.status_pagamento?.toString().toLowerCase() || '';
-              
-              const isCompleted = 
-                gatewayStatus === 'concluida' ||
-                gatewayStatus === 'completed' ||
-                gatewayStatus === 'paid' ||
-                gatewayStatus === 'pago' ||
-                transactionData.status === 1;
-              
-              const isNotCompleted = 
-                gatewayStatus === 'ativa' ||
-                gatewayStatus === 'active' ||
-                gatewayStatus === 'pending' ||
-                gatewayStatus === 'waiting' ||
-                gatewayStatus === 'aguardando';
-
-              // Se o depósito está "approved" no banco mas não está concluído na gateway, reverter
-              if (deposit.status === 'approved' && !isCompleted) {
-                // Buscar o saldo atual do usuário para descontar o valor
-                const { data: currentUser } = await supabase
-                  .from('users')
-                  .select('balance')
-                  .eq('id', user.id)
-                  .single();
-
-                if (currentUser) {
-                  const depositAmount = parseFloat(deposit.amount.toString());
-                  const newBalance = Math.max(0, (currentUser.balance || 0) - depositAmount);
-                  
-                  // Reverter status do depósito para pending
-                  const { error: updateError } = await supabase
-                    .from('deposits')
-                    .update({
-                      status: 'pending',
-                      admin_notes: `Status revertido de 'approved' para 'pending'. Gateway status: "${gatewayStatus}". Transaction ID: ${deposit.transaction_id}. Revertido em: ${new Date().toISOString()}`,
-                    })
-                    .eq('id', deposit.id);
-
-                  if (!updateError) {
-                    // Atualizar saldo do usuário (persiste no banco via updateBalance)
-                    updateBalance(newBalance);
-                    
-                    toast.warning(
-                      `Depósito de ${formatCurrency(depositAmount)} revertido. Status na gateway: "${gatewayStatus}".`,
-                      { duration: 5000 }
-                    );
-                  }
-                }
-                
-                // Continuar para próximo depósito
-                continue;
-              }
-
-              // Se o status indica que o pagamento foi concluído
-              if (isCompleted && deposit.status === 'pending') {
-                // Atualizar depósito para approved e processar saldo
-                const { error: updateError } = await supabase
-                  .from('deposits')
-                  .update({
-                    status: 'approved',
-                    admin_notes: `Depósito aprovado automaticamente após confirmação do pagamento PIX. Transaction ID: ${deposit.transaction_id}. Verificado em: ${new Date().toISOString()}`,
-                  })
-                  .eq('id', deposit.id);
-
-                if (updateError) {
-                  console.error('Error:', updateError instanceof Error ? updateError.message : 'Unknown');
-                  continue;
-                }
-
-                // Atualizar saldo do usuário (persiste no banco via updateBalance)
-                const depositAmount = parseFloat(deposit.amount.toString());
-                const newBalance = activeBalance + depositAmount;
-                updateBalance(newBalance);
-
-                // Marcar como processado para evitar duplicação
-                setProcessedDepositIds(prev => new Set(prev).add(deposit.id));
-
-                // Mostrar notificação de sucesso
-                toast.success(
-                  `Pagamento confirmado! Depósito de ${formatCurrency(depositAmount)} aprovado. Saldo atualizado.`,
-                  { duration: 5000 }
-                );
-
-                // Se o modal de pagamento PIX estiver aberto, mostrar mensagem de sucesso
-                // Se o modal de pagamento PIX estiver aberto, atualizar status
-                if (showPixPaymentModal && pixPaymentData && 
-                    (pixPaymentData.externalId === deposit.transaction_id || 
-                     pixPaymentData.depositId === deposit.id)) {
+            if (showPixPaymentModal && pixPaymentData && 
+                (pixPaymentData.depositId === deposit.id)) {
+              // Verificar se há próxima parcela
+              if (pixPaymentData.allOrders && pixPaymentData.currentPart && pixPaymentData.totalParts && 
+                  pixPaymentData.currentPart < pixPaymentData.totalParts) {
+                const nextIndex = pixPaymentData.currentPart; // currentPart é 1-based, index é 0-based
+                const nextOrder = pixPaymentData.allOrders[nextIndex];
+                if (nextOrder) {
+                  // Mostrar confirmação breve e avançar para próxima parcela
                   setDepositPaymentStatus('completed');
-                  // Fechar modal após 5 segundos
                   setTimeout(() => {
-                    setShowPixPaymentModal(false);
-                    setPixPaymentData(null);
-                    setDepositPaymentStatus(null);
-                  }, 5000);
+                    setPixPaymentData({
+                      ...pixPaymentData,
+                      qrCode: nextOrder.qrCode,
+                      paymentImage: nextOrder.paymentImage,
+                      amount: nextOrder.amount,
+                      externalId: nextOrder.externalId,
+                      depositId: nextOrder.depositId,
+                      currentPart: (pixPaymentData.currentPart || 1) + 1,
+                    });
+                    setDepositPaymentStatus('pending');
+                  }, 2000);
                 }
-
+              } else {
+                // Última parcela ou depósito simples — fechar
+                setDepositPaymentStatus('completed');
+                setTimeout(() => {
+                  setShowPixPaymentModal(false);
+                  setPixPaymentData(null);
+                  setDepositPaymentStatus(null);
+                }, 5000);
               }
-            } catch (apiError) {
-              console.error('Error:', apiError instanceof Error ? apiError.message : 'Unknown');
-              // Continuar para o próximo depósito mesmo se houver erro
             }
           }
         }
-      } catch (error) {
-        console.error('Error:', error instanceof Error ? error.message : 'Unknown');
+
+        // Depósitos já aprovados (via webhook/admin) — apenas marcar como processados e atualizar modal, SEM toast
+        if (result.approved && result.approved.length > 0) {
+          for (const deposit of result.approved) {
+            if (processedDepositIds.has(deposit.id)) continue;
+
+            setProcessedDepositIds(prev => new Set(prev).add(deposit.id));
+
+            // Atualizar modal PIX se estiver aberto para este depósito
+            if (showPixPaymentModal && pixPaymentData && 
+                (pixPaymentData.externalId === deposit.transaction_id || 
+                 pixPaymentData.depositId === deposit.id)) {
+              // Verificar se há próxima parcela
+              if (pixPaymentData.allOrders && pixPaymentData.currentPart && pixPaymentData.totalParts && 
+                  pixPaymentData.currentPart < pixPaymentData.totalParts) {
+                const nextIndex = pixPaymentData.currentPart;
+                const nextOrder = pixPaymentData.allOrders[nextIndex];
+                if (nextOrder) {
+                  setDepositPaymentStatus('completed');
+                  setTimeout(() => {
+                    setPixPaymentData({
+                      ...pixPaymentData,
+                      qrCode: nextOrder.qrCode,
+                      paymentImage: nextOrder.paymentImage,
+                      amount: nextOrder.amount,
+                      externalId: nextOrder.externalId,
+                      depositId: nextOrder.depositId,
+                      currentPart: (pixPaymentData.currentPart || 1) + 1,
+                    });
+                    setDepositPaymentStatus('pending');
+                  }, 2000);
+                }
+              } else {
+                setDepositPaymentStatus('completed');
+                setTimeout(() => {
+                  setShowPixPaymentModal(false);
+                  setPixPaymentData(null);
+                  setDepositPaymentStatus(null);
+                }, 5000);
+              }
+            }
+          }
+        }
+      } catch {
+        // Silenciar erros de polling
       }
     };
 
     // Verificar imediatamente ao montar o componente
-    checkPendingDepositsStatus();
+    checkDepositStatus();
 
-    // Verificar a cada 15 segundos (reduzido para verificar mais frequentemente)
-    const interval = setInterval(checkPendingDepositsStatus, 15000);
+    // Verificar a cada 5 segundos
+    const interval = setInterval(checkDepositStatus, 5000);
 
     return () => clearInterval(interval);
-  }, [user, supabase, updateBalance, processedDepositIds, showPixPaymentModal, pixPaymentData]);
+  }, [user, supabase, processedDepositIds, showPixPaymentModal, pixPaymentData]);
 
   // Função para agrupar gateways por categoria
   const groupGatewaysByCategory = (gateways: any[]) => {
@@ -1730,22 +1720,23 @@ const TradingPage: React.FC = () => {
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden">
       {/* Top Bar - Modelo da Referência */}
-      <div className={`absolute top-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-b border-gray-900/50 px-2 py-2 md:px-4 md:py-3.5 ${isMobile && isLandscape ? 'py-1' : ''}`}>
+      <div className={`absolute top-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-b border-gray-900/50 px-2 py-1.5 md:px-4 md:py-3.5 ${isMobile && isLandscape ? 'py-1' : ''}`}>
+        {/* Linha 1: Logo + User Info + Saldo + Depositar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 md:space-x-4 flex-1 min-w-0">
-            {/* Logo - esconde no landscape mobile para dar mais espaço */}
+            {/* Logo */}
             {brokerLogo && (
-              <div className={`flex items-center space-x-2 flex-shrink-0 ${isMobile && isLandscape ? 'hidden' : ''}`}>
+              <div className="flex items-center space-x-2 flex-shrink-0">
                 <img 
                   src={brokerLogo} 
                   alt={brokerName}
-                  className="h-8 md:h-12 w-auto object-contain"
+                  className="h-6 md:h-12 w-auto object-contain"
                 />
               </div>
             )}
 
-            {/* Asset Tabs - Cards Melhorados com Efeito 3D */}
-            <div className="flex items-center space-x-2 overflow-x-auto overflow-y-visible pb-2">
+            {/* Asset Tabs - Desktop: inline / Mobile: segunda linha */}
+            <div className="hidden md:flex items-center space-x-2 overflow-x-auto overflow-y-visible pb-2 scrollbar-hide">
               {assets.map((asset) => {
                 // Verificar se há trade ativo neste ativo
                 const assetActiveTrade = localActiveTrades.find(
@@ -1783,9 +1774,9 @@ const TradingPage: React.FC = () => {
                             }`
                     }`}
                     style={{
-                      width: '135px',
-                      height: '47px',
-                      padding: '0 8px',
+                      width: isMobile ? '110px' : '135px',
+                      height: isMobile ? '40px' : '47px',
+                      padding: isMobile ? '0 6px' : '0 8px',
                       ...(hasResult ? {
                         background: assetResult.result === 'win'
                           ? 'linear-gradient(to bottom, rgba(34, 197, 94, 0.25) 0%, rgba(6, 30, 15, 0.6) 100%)'
@@ -1986,11 +1977,11 @@ const TradingPage: React.FC = () => {
                     />
                     {/* Modal - Design igual ao timeframe */}
                     <div 
-                      className="fixed left-0 md:left-4 top-20 bg-black backdrop-blur-xl shadow-2xl z-[60] overflow-hidden w-full md:w-[720px] max-h-[80vh] animate-[fadeIn_0.2s_ease-out_forwards] border border-gray-800/50 rounded mx-2 md:mx-0" 
+                      className="fixed left-0 md:left-4 bg-black backdrop-blur-xl shadow-2xl z-[60] overflow-hidden w-[calc(100%-16px)] md:w-[720px] max-h-[75vh] md:max-h-[80vh] animate-[fadeIn_0.2s_ease-out_forwards] border border-gray-800/50 rounded mx-2 md:mx-0" 
                       data-add-pair-modal
                       onClick={(e) => e.stopPropagation()}
                       style={{
-                        top: '60px'
+                        top: isMobile ? '50px' : '60px'
                       }}
                     >
                       {/* Campo de pesquisa */}
@@ -2010,7 +2001,7 @@ const TradingPage: React.FC = () => {
                       {/* Layout: Coluna de mercados + Lista de pares */}
                       <div className="flex">
                         {/* Coluna de seleção de mercados (lado esquerdo) */}
-                        <div className="w-[170px] border-r border-gray-700/50 bg-gray-800/30">
+                        <div className="w-[120px] md:w-[170px] border-r border-gray-700/50 bg-gray-800/30">
                           <div className="py-2">
                             {(['all', 'crypto', 'forex', 'stocks', 'indices', 'commodities'] as const).map((market, idx) => {
                               const marketConfig: Record<string, { label: string; icon: React.ReactNode }> = {
@@ -2154,7 +2145,7 @@ const TradingPage: React.FC = () => {
           </div>
 
           {/* User Info - Modelo da Referência */}
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-1.5 md:space-x-3">
             {/* Avatar clicável com seta dropdown */}
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
@@ -2165,30 +2156,30 @@ const TradingPage: React.FC = () => {
                   <img
                     src={userPhoto}
                     alt={user.name}
-                    className="w-12 h-12 rounded-full object-cover border-2 border-gray-600"
+                    className="w-8 h-8 md:w-12 md:h-12 rounded-full object-cover border-2 border-gray-600"
                   />
                 ) : (
-                  <div className="w-12 h-12 bg-gray-700 rounded-full flex items-center justify-center">
-                    <User className="w-7 h-7 text-gray-300" />
+                  <div className="w-8 h-8 md:w-12 md:h-12 bg-gray-700 rounded-full flex items-center justify-center">
+                    <User className="w-4 h-4 md:w-7 md:h-7 text-gray-300" />
                   </div>
                 )}
-                <div className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-green-500 rounded-full flex items-center justify-center border-2 border-black">
-                  <CheckCircle2 className="w-3 h-3 text-white" />
+                <div className="absolute -top-0.5 -right-0.5 w-3 h-3 md:w-4 md:h-4 bg-green-500 rounded-full flex items-center justify-center border-2 border-black">
+                  <CheckCircle2 className="w-2 h-2 md:w-3 md:h-3 text-white" />
                 </div>
               </div>
-              <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform hidden md:block ${showUserMenu ? 'rotate-180' : ''}`} />
             </button>
             {/* Seletor Conta Demo / Real + Saldo */}
             <div className="relative">
               <button
                 onClick={() => setShowAccountDropdown(!showAccountDropdown)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all hover:bg-white/5"
+                className="flex items-center gap-1 md:gap-2 px-1.5 md:px-3 py-1 md:py-1.5 rounded-lg transition-all hover:bg-white/5"
               >
                 <div className="text-left">
-                  <div className="text-[10px] uppercase tracking-wider text-gray-400 leading-none">
-                    {accountType === 'demo' ? 'Conta Demo' : 'Conta Real'}
+                  <div className="text-[9px] md:text-[10px] uppercase tracking-wider text-gray-400 leading-none">
+                    {accountType === 'demo' ? 'Demo' : 'Real'}
                   </div>
-                  <div className={`text-lg font-bold leading-tight ${accountType === 'demo' ? 'text-blue-400' : 'text-green-400'}`}>
+                  <div className={`text-sm md:text-lg font-bold leading-tight ${accountType === 'demo' ? 'text-blue-400' : 'text-green-400'}`}>
                     R$ {activeBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </div>
                 </div>
@@ -2234,15 +2225,109 @@ const TradingPage: React.FC = () => {
             </div>
             <button 
               onClick={() => setShowDepositModal(true)}
-              className="border border-green-500 text-white px-4 py-2 rounded text-sm font-medium hover:bg-green-500/10 transition-colors"
+              className="border border-green-500 text-white px-2.5 py-1.5 md:px-4 md:py-2 rounded text-xs md:text-sm font-medium hover:bg-green-500/10 transition-colors flex-shrink-0"
             >
               Depositar
             </button>
           </div>
         </div>
+        
+        {/* Linha 2 - Mobile Only: Asset Tabs em linha separada */}
+        <div className={`md:hidden flex items-center space-x-1.5 overflow-x-auto scrollbar-hide ${isLandscape ? 'mt-0.5 pb-0.5' : 'mt-1 pb-1'} px-0.5`}>
+          {assets.map((asset) => {
+            const assetActiveTrade = localActiveTrades.find(
+              t => t.symbol === asset.symbol && !t.result && t.expiration > Date.now()
+            );
+            const assetResult = tradeResults[asset.symbol];
+            const hasResult = assetResult && (Date.now() - assetResult.timestamp < 30000);
+            const imageUrl = asset.imageUrl || getCryptoImageUrl(asset.symbol);
+            
+            return (
+              <div
+                key={`mobile-${asset.symbol}`}
+                onClick={() => setSelectedAsset(asset.symbol)}
+                className={`flex-shrink-0 flex items-center gap-1.5 rounded-md cursor-pointer transition-all text-xs ${
+                  hasResult
+                    ? ''
+                    : selectedAsset === asset.symbol
+                      ? 'bg-gray-800/80 text-white border border-gray-700/50'
+                      : 'bg-gray-900/60 text-gray-400 border border-gray-800/30'
+                }`}
+                style={{
+                  padding: isLandscape ? '2px 6px' : '4px 8px',
+                  height: isLandscape ? '24px' : '32px',
+                  ...(hasResult ? {
+                    background: assetResult.result === 'win'
+                      ? 'linear-gradient(135deg, rgba(34,197,94,0.2), rgba(6,30,15,0.5))'
+                      : 'linear-gradient(135deg, rgba(239,68,68,0.2), rgba(40,8,8,0.5))',
+                    border: `1px solid ${assetResult.result === 'win' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                  } : assetActiveTrade ? {
+                    background: 'linear-gradient(135deg, rgba(59,130,246,0.15), rgba(17,24,39,0.6))',
+                    border: '1px solid rgba(59,130,246,0.2)',
+                  } : {}),
+                }}
+              >
+                {/* Ícone */}
+                {assetActiveTrade ? (
+                  (() => {
+                    const now = Date.now();
+                    const totalDuration = assetActiveTrade.expiration - new Date(assetActiveTrade.createdAt).getTime();
+                    const remaining = Math.max(0, assetActiveTrade.expiration - now);
+                    const progress = totalDuration > 0 ? 1 - (remaining / totalDuration) : 1;
+                    const remainingSec = Math.ceil(remaining / 1000);
+                    const timeText = remainingSec > 60 ? `${Math.floor(remainingSec/60)}:${(remainingSec%60).toString().padStart(2,'0')}` : `${remainingSec}`;
+                    const circumference = 2 * Math.PI * 8;
+                    const color = assetActiveTrade.type === 'call' ? '#22c55e' : '#ef4444';
+                    return (
+                      <div className="relative w-5 h-5 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-5 h-5 -rotate-90" viewBox="0 0 20 20">
+                          <circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="2" />
+                          <circle cx="10" cy="10" r="8" fill="none" stroke={color} strokeWidth="2"
+                            strokeDasharray={circumference}
+                            strokeDashoffset={circumference * (1 - progress)}
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                        <span className="absolute text-[6px] font-bold text-white">{timeText}</span>
+                      </div>
+                    );
+                  })()
+                ) : imageUrl ? (
+                  <img src={imageUrl} alt={asset.symbol} className="w-4 h-4 object-contain rounded-full flex-shrink-0" />
+                ) : (
+                  <div className="w-4 h-4 bg-gray-600 rounded-full flex items-center justify-center text-[7px] font-bold flex-shrink-0">
+                    {asset.symbol.split('/')[0].charAt(0)}
+                  </div>
+                )}
+                
+                {/* Nome + Preço */}
+                <div className="min-w-0">
+                  <div className="font-semibold text-[10px] leading-none truncate">{asset.symbol.split('/')[0]}</div>
+                  {hasResult ? (
+                    <div className={`text-[8px] font-bold ${assetResult.result === 'win' ? 'text-green-400' : 'text-red-400'}`}>
+                      {assetResult.profit >= 0 ? '+' : '-'}R${Math.abs(assetResult.profit).toFixed(0)}
+                    </div>
+                  ) : (
+                    <div className="text-[8px] text-gray-500 leading-none">
+                      {(asset.currentPrice || 0).toFixed(asset.symbol.includes('JPY') ? 3 : 2)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          
+          {/* Botão adicionar par - Mobile */}
+          <button 
+            onClick={() => setShowAddPairModal(!showAddPairModal)}
+            className="flex-shrink-0 p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-all border border-gray-700/50"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
-      <div className="flex h-screen pt-12 md:pt-14 pb-0 md:pb-12">
+      <div className="flex md:pt-14 md:pb-12 overflow-hidden" style={{ height: isMobile ? (isLandscape ? 'calc(100vh - 62px - 48px)' : 'calc(100vh - 82px - 92px)') : '100vh', paddingTop: isMobile ? '0' : undefined, marginTop: isMobile ? (isLandscape ? '62px' : '82px') : undefined }}>
         {/* Sidebar - Compacto com ícones modernos */}
         <div className={`${sidebarCollapsed ? 'w-16' : 'w-20'} bg-black border-r border-gray-900 transition-all duration-300 hidden md:flex flex-col pt-6`} style={{ boxShadow: '2px 0 8px rgba(0, 0, 0, 0.5)' }}>
           {!sidebarCollapsed && (
@@ -2513,8 +2598,8 @@ const TradingPage: React.FC = () => {
               </div>
             </div>
             
-            {/* Indicador de Sentimento do Mercado - Chevrons */}
-              {!showBottomTab && (
+            {/* Indicador de Sentimento do Mercado - Chevrons (escondido em mobile) */}
+              {!showBottomTab && !isMobile && (
               <div 
                 className="relative flex flex-col items-center pointer-events-auto"
                 style={{ width: '36px' }}
@@ -2587,7 +2672,7 @@ const TradingPage: React.FC = () => {
           </div>
 
           {/* Botões de Ferramentas - Container separado, limitado apenas à área dos botões */}
-          <div className="absolute left-4 z-20 pointer-events-none" style={{ left: leftPanelOpen && leftPanelWidth > 0 ? `calc(1rem + ${leftPanelWidth}px)` : '1rem', bottom: showBottomTab ? 'calc(3rem + 25vh)' : '3rem', transition: 'left 0.3s, bottom 0.3s ease-in-out' }}>
+          <div className={`absolute left-4 z-20 pointer-events-none ${isMobile ? 'hidden' : ''}`} style={{ left: leftPanelOpen && leftPanelWidth > 0 ? `calc(1rem + ${leftPanelWidth}px)` : '1rem', bottom: showBottomTab ? 'calc(3rem + 25vh)' : '3rem', transition: 'left 0.3s, bottom 0.3s ease-in-out' }}>
             <div className="flex flex-col items-start space-y-2 pointer-events-auto">
               {/* 1. Botão de Tipo de Gráfico */}
               <div className="relative" data-controls-panel>
@@ -3751,8 +3836,8 @@ const TradingPage: React.FC = () => {
           </div>
 
                 {/* Chart - Ocupa todo o espaço disponível */}
-                <div className="flex-1 bg-black relative pb-0 md:pb-0 min-h-0 overflow-visible flex" style={{ minHeight: 0, marginLeft: leftPanelOpen && leftPanelWidth > 0 ? `${leftPanelWidth}px` : '0', paddingTop: '1.5rem', paddingBottom: isMobile ? '5rem' : '0', marginBottom: showBottomTab ? 'calc(25vh - 1rem)' : '0', transition: 'margin-bottom 0.3s ease-in-out, margin-left 0.3s' }}>
-                  <div className="flex-1 relative min-w-0" style={{ height: leftPanelOpen && leftPanelWidth > 0 ? 'calc(100vh - 1.5rem - 2rem)' : (showBottomTab ? 'calc(100% - 25vh + 1rem - 1.5rem)' : 'calc(100% - 1.5rem)'), width: '100%', maxHeight: leftPanelOpen && leftPanelWidth > 0 ? 'calc(100vh - 1.5rem - 2rem)' : (showBottomTab ? 'calc(100vh - 1.5rem - 25vh + 1rem - 2rem)' : 'none'), transition: 'height 0.3s ease-in-out, max-height 0.3s ease-in-out' }}>
+                <div className={`flex-1 bg-black relative pb-0 md:pb-0 min-h-0 ${isMobile ? 'overflow-hidden' : 'overflow-visible'} flex`} style={{ minHeight: 0, marginLeft: leftPanelOpen && leftPanelWidth > 0 ? `${leftPanelWidth}px` : '0', paddingTop: isMobile ? '0' : '1.5rem', paddingBottom: '0', marginBottom: showBottomTab ? 'calc(25vh - 1rem)' : '0', transition: 'margin-bottom 0.3s ease-in-out, margin-left 0.3s' }}>
+                  <div className="flex-1 relative min-w-0" style={{ height: isMobile ? '100%' : (leftPanelOpen && leftPanelWidth > 0 ? 'calc(100vh - 1.5rem - 2rem)' : (showBottomTab ? 'calc(100% - 25vh + 1rem - 1.5rem)' : 'calc(100% - 1.5rem)')), width: '100%', maxHeight: isMobile ? 'none' : (leftPanelOpen && leftPanelWidth > 0 ? 'calc(100vh - 1.5rem - 2rem)' : (showBottomTab ? 'calc(100vh - 1.5rem - 25vh + 1rem - 2rem)' : 'none')), transition: 'height 0.3s ease-in-out, max-height 0.3s ease-in-out' }}>
             {marketLoading && candlestickData.length === 0 ? (
                       <div className="absolute inset-0 flex items-center justify-center bg-black">
                         <MarketLoading message="Carregando dados do mercado..." />
@@ -3803,6 +3888,7 @@ const TradingPage: React.FC = () => {
                   }}
                   onPriceUpdate={(price) => {
                     setCurrentPrice(price);
+                    lastKnownPricesRef.current.set(selectedAsset, price);
                   }}
                   onExpirationTimeChange={(newExpirationTime) => {
                     // Atualizar expirationTime quando o timer zera automaticamente
@@ -4666,30 +4752,57 @@ const TradingPage: React.FC = () => {
       </div>
 
       {/* Mobile Trade Panel - Bottom */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-t border-gray-800 px-3 py-2 safe-area-bottom">
-        <div className="flex items-center gap-2">
-          {/* Valor */}
-          <div className="flex items-center bg-gray-800/60 rounded px-2 py-1.5 gap-1 flex-shrink-0">
-            <span className="text-gray-400 text-xs">R$</span>
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-black border-t border-gray-800/60 px-2 safe-area-bottom" style={{ paddingTop: isLandscape ? '3px' : '6px', paddingBottom: isLandscape ? '3px' : 'max(6px, env(safe-area-inset-bottom))' }}>
+        {/* Landscape: tudo em 1 linha / Portrait: 2 linhas */}
+        {!isLandscape && (
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <div className="flex items-center bg-gray-800/80 rounded-md px-2.5 py-2 gap-1 flex-1">
+            <span className="text-gray-400 text-xs font-medium">R$</span>
             <input
               type="number"
               value={tradeValue}
               onChange={(e) => setTradeValue(Math.max(10, parseInt(e.target.value) || 10))}
-              className="bg-transparent text-white font-bold text-sm outline-none w-14"
+              className="bg-transparent text-white font-bold text-sm outline-none w-full"
               style={{ caretColor: '#3b82f6', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
             />
           </div>
           
-          {/* Expiração compacta */}
-          <div className="flex items-center bg-gray-800/60 rounded px-2 py-1.5 gap-1 flex-shrink-0">
-            <Clock className="w-3 h-3 text-gray-400" />
+          <div className="flex items-center bg-gray-800/80 rounded-md px-2.5 py-2 gap-1.5 flex-1">
+            <Clock className="w-3.5 h-3.5 text-gray-400" />
             <span className="text-white text-xs font-bold">
               {expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
           
-          {/* Botões Comprar/Vender */}
-          <div className="flex gap-1.5 flex-1">
+          <div className="flex items-center bg-gray-800/80 rounded-md px-2.5 py-2 gap-1 flex-shrink-0">
+            <span className="text-emerald-400 text-xs font-bold">+{profitPercent}%</span>
+          </div>
+        </div>
+        )}
+        
+        {/* Botões - Portrait: linha 2 / Landscape: linha única com inputs inline */}
+        <div className="flex gap-1.5 items-center">
+          {isLandscape && (
+            <>
+              <div className="flex items-center bg-gray-800/80 rounded px-2 py-1 gap-1 flex-shrink-0">
+                <span className="text-gray-400 text-[10px]">R$</span>
+                <input
+                  type="number"
+                  value={tradeValue}
+                  onChange={(e) => setTradeValue(Math.max(10, parseInt(e.target.value) || 10))}
+                  className="bg-transparent text-white font-bold text-xs outline-none w-12"
+                  style={{ caretColor: '#3b82f6', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
+                />
+              </div>
+              <div className="flex items-center bg-gray-800/80 rounded px-2 py-1 gap-1 flex-shrink-0">
+                <Clock className="w-3 h-3 text-gray-400" />
+                <span className="text-white text-[10px] font-bold">
+                  {expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+              <span className="text-emerald-400 text-[10px] font-bold flex-shrink-0">+{profitPercent}%</span>
+            </>
+          )}
             <button
               onClick={async () => {
                 playClick();
@@ -4710,10 +4823,10 @@ const TradingPage: React.FC = () => {
                   } else { toast.error(result.message || 'Erro ao executar trade'); }
                 } catch (error) { console.error('Error:', error instanceof Error ? error.message : 'Unknown'); toast.error('Erro ao executar trade'); }
               }}
-              className="flex-1 bg-green-600/80 active:bg-green-700 text-white py-3 rounded flex items-center justify-center gap-1.5 transition-colors"
+              className="flex-1 bg-green-600 active:bg-green-700 text-white py-3 rounded-md flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"
             >
               <TrendingUp className="w-4 h-4" />
-              <span className="text-xs font-bold">COMPRAR</span>
+              <span className="text-sm font-bold">COMPRAR</span>
             </button>
             <button
               onClick={async () => {
@@ -4735,21 +4848,20 @@ const TradingPage: React.FC = () => {
                   } else { toast.error(result.message || 'Erro ao executar trade'); }
                 } catch (error) { console.error('Error:', error instanceof Error ? error.message : 'Unknown'); toast.error('Erro ao executar trade'); }
               }}
-              className="flex-1 bg-red-600/80 active:bg-red-700 text-white py-3 rounded flex items-center justify-center gap-1.5 transition-colors"
+              className="flex-1 bg-red-600 active:bg-red-700 text-white py-3 rounded-md flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"
             >
               <TrendingDown className="w-4 h-4" />
-              <span className="text-xs font-bold">VENDER</span>
+              <span className="text-sm font-bold">VENDER</span>
             </button>
           </div>
-        </div>
       </div>
 
       {/* Aba Embaixo do Gráfico - Portfólio Total (Primeiro item do menu lateral) */}
       {showBottomTab && (
         <div className="fixed z-40 bg-black border-t border-gray-800 transition-all duration-300 overflow-hidden" style={{ 
-          height: '25vh', 
-          maxHeight: '300px',
-          bottom: '3rem', 
+          height: isMobile ? '35vh' : '25vh', 
+          maxHeight: isMobile ? '260px' : '300px',
+          bottom: isMobile ? '5.5rem' : '3rem', 
           left: isMobile ? '0px' : `${sidebarCollapsed ? 64 : 80}px`,
           right: isMobile ? '0px' : '160px',
           pointerEvents: 'auto'
@@ -5136,9 +5248,7 @@ const TradingPage: React.FC = () => {
                                   </div>
                                 </div>
                                 <div className="text-xs text-gray-400">
-                                  {gateway.estimated_time || 'Tempo variável'} • 
-                                  min {formatCurrency(gateway.min_amount)}
-                                  {gateway.max_amount && ` • max ${formatCurrency(gateway.max_amount)}`}
+                                  {gateway.estimated_time || 'Tempo variável'} min • Rápido e seguro
                                   {gateway.service_fee_percentage > 0 && ` • taxa ${gateway.service_fee_percentage}%`}
                                 </div>
                               </button>
@@ -5163,13 +5273,12 @@ const TradingPage: React.FC = () => {
                       onChange={(e) => {
                         const value = parseFloat(e.target.value) || 0;
                         const min = selectedGateway.min_amount || 20;
-                        const max = selectedGateway.max_amount || 50000;
-                        if (value >= min && value <= max) {
+                        if (value >= min && value <= 1000) {
                           setDepositAmount(value);
                         }
                       }}
                       min={selectedGateway.min_amount || 20}
-                      max={selectedGateway.max_amount || 50000}
+                      max={1000}
                       className="w-full px-4 py-3 bg-gray-800/50 border border-white/10 rounded text-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
                       placeholder="R$ 20,00"
                     />
@@ -5178,9 +5287,8 @@ const TradingPage: React.FC = () => {
                   {/* Botões de Valores Pré-definidos */}
                   <div>
                     <div className="grid grid-cols-4 gap-3">
-                      {[20, 50, 100, 250, 500, 1000, 2500, 5000].map((amount) => {
-                        const isValid = amount >= (selectedGateway.min_amount || 20) && (!selectedGateway.max_amount || amount <= selectedGateway.max_amount);
-                        if (!isValid) return null;
+                      {[20, 50, 100, 250, 500, 1000].map((amount) => {
+                        if (amount < (selectedGateway.min_amount || 20)) return null;
                         return (
                           <button
                             key={amount}
@@ -5306,13 +5414,23 @@ const TradingPage: React.FC = () => {
                         return;
                       }
                       if (!user || !selectedGateway || !supabase) {
-                        toast.error('Erro ao processar depósito. Tente novamente.');
+                        toast.custom((t) => (
+                          <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                            style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                            <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>Erro ao processar depósito. Tente novamente.</p>
+                          </div>
+                        ), { duration: 3000, position: 'top-right' });
                         return;
                       }
 
                       try {
                         // Mostrar loading
-                        toast.loading('Processando depósito...', { id: 'deposit-processing' });
+                        toast.custom((t) => (
+                          <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                            style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                            <p style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: 500, margin: 0 }}>Processando depósito...</p>
+                          </div>
+                        ), { duration: 10000, position: 'top-right', id: 'deposit-processing' });
 
                         // Buscar configurações completas do gateway
                         const { data: gatewayData, error: gatewayError } = await supabase
@@ -5322,7 +5440,13 @@ const TradingPage: React.FC = () => {
                           .single();
 
                         if (gatewayError || !gatewayData) {
-                          toast.error('Erro ao carregar configurações do gateway', { id: 'deposit-processing' });
+                          toast.dismiss('deposit-processing');
+                          toast.custom((t) => (
+                            <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                              style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                              <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>Erro ao carregar configurações do gateway</p>
+                            </div>
+                          ), { duration: 3000, position: 'top-right' });
                           return;
                         }
 
@@ -5335,16 +5459,12 @@ const TradingPage: React.FC = () => {
                           // Ler api_base_url e split_config do campo config (JSONB)
                           const gatewayConfig = gatewayData.config || {};
                           const apiBaseUrl = gatewayConfig.api_base_url || gatewayData.api_base_url || 'https://api.horsepay.io';
-                          // Callback URL - obrigatório pela API HorsePay
-                          // Usar webhook_url se configurado, senão usar URL padrão da aplicação
                           const callbackUrl = gatewayData.webhook_url?.trim() || `${window.location.origin}/api/deposits/callback`;
 
                           // 1. Autenticar na API HorsePay
                           const authResponse = await fetch(`${apiBaseUrl}/auth/token`, {
                             method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                            },
+                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                               client_key: clientKey,
                               client_secret: clientSecret,
@@ -5366,8 +5486,7 @@ const TradingPage: React.FC = () => {
                           const authData = await authResponse.json();
                           const accessToken = authData.access_token;
 
-                          // 2. Criar pedido de depósito
-                          // Parse split_config se existir (pode estar em config.split ou split_config)
+                          // 2. Parse split_config
                           let split = null;
                           if (gatewayConfig.split) {
                             split = gatewayConfig.split;
@@ -5377,42 +5496,40 @@ const TradingPage: React.FC = () => {
                                 ? JSON.parse(gatewayData.split_config)
                                 : gatewayData.split_config;
                             } catch {
-                              // Ignore parse error, use null
+                              // Ignore parse error
                             }
                           }
 
-                          // Validar dados antes de enviar
+                          // Validar dados
                           if (!user.name || user.name.trim().length === 0) {
                             throw new Error('Nome do usuário é obrigatório para realizar depósito');
                           }
+
 
                           if (depositAmount < 20) {
                             throw new Error('Valor mínimo de depósito é R$ 20,00');
                           }
 
-                          // Preparar dados do pedido
-                          // callback_url é obrigatório pela API HorsePay
+                          // 3. Preparar payload (exatamente como funcionava antes)
                           const orderPayload: any = {
                             payer_name: user.name.trim(),
-                            amount: parseFloat(depositAmount.toFixed(2)), // Garantir 2 casas decimais
-                            callback_url: callbackUrl.trim(), // Obrigatório
+                            amount: parseFloat(depositAmount.toFixed(2)),
+                            callback_url: callbackUrl.trim(),
                             client_reference_id: `deposit_${user.id}_${Date.now()}`,
                           };
 
-                          // Adicionar phone apenas se fornecido e válido
-                          if (user.phone && user.phone.trim()) {
-                            // Remover caracteres não numéricos do telefone
-                            const cleanPhone = user.phone.replace(/\D/g, '');
+                          if ((user as any).phone && (user as any).phone.trim()) {
+                            const cleanPhone = (user as any).phone.replace(/\D/g, '');
                             if (cleanPhone.length >= 10) {
                               orderPayload.phone = cleanPhone;
                             }
                           }
 
-                          // Adicionar split apenas se configurado e válido
                           if (split && Array.isArray(split) && split.length > 0) {
                             orderPayload.split = split;
                           }
 
+                          // 4. Criar pedido na HorsePay
                           const orderResponse = await fetch(`${apiBaseUrl}/transaction/neworder`, {
                             method: 'POST',
                             headers: {
@@ -5436,20 +5553,24 @@ const TradingPage: React.FC = () => {
 
                           const orderData = await orderResponse.json();
 
-                          // 3. Se a API retornar sucesso, criar depósito no banco com status "pending"
-                          // O depósito só será aprovado quando o pagamento for confirmado via webhook
+                          // 5. Verificar sucesso
                           const isSuccess = orderData.status === 0 || orderData.external_id;
 
                           if (isSuccess) {
-                            // Verificar se temos QR code ou chave PIX para pagamento
                             const hasPaymentData = orderData.copy_past || orderData.payment;
 
                             if (!hasPaymentData) {
-                              toast.error('Erro: QR code PIX não foi gerado pela API', { id: 'deposit-processing' });
+                              toast.dismiss('deposit-processing');
+                              toast.custom((t) => (
+                                <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                                  style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                                  <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>QR code PIX não foi gerado pela API</p>
+                                </div>
+                              ), { duration: 3000, position: 'top-right' });
                               return;
                             }
 
-                            // Criar depósito no banco com status "pending" (aguardando pagamento)
+                            // Criar depósito no banco com status "pending"
                             const paymentInfo = {
                               qr_code: orderData.copy_past || null,
                               payment_image: orderData.payment || null,
@@ -5462,7 +5583,7 @@ const TradingPage: React.FC = () => {
                                 user_id: user.id,
                                 amount: depositAmount,
                                 method: gatewayData.type,
-                                status: 'pending', // Pendente até confirmação do pagamento
+                                status: 'pending',
                                 transaction_id: orderData.external_id?.toString() || orderData.client_reference_id,
                                 admin_notes: `Aguardando pagamento PIX. External ID: ${orderData.external_id || 'N/A'}. Payment Info: ${JSON.stringify(paymentInfo)}`,
                               })
@@ -5471,14 +5592,17 @@ const TradingPage: React.FC = () => {
 
                             if (depositError) {
                               console.error('Error:', depositError instanceof Error ? depositError.message : 'Unknown');
-                              toast.error('Erro ao criar registro de depósito. Tente novamente.', { id: 'deposit-processing' });
+                              toast.dismiss('deposit-processing');
+                              toast.custom((t) => (
+                                <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                                  style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                                  <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>Erro ao criar registro de depósito. Tente novamente.</p>
+                                </div>
+                              ), { duration: 3000, position: 'top-right' });
                               return;
                             }
 
-                            // NÃO atualizar saldo ainda - apenas após confirmação do pagamento via webhook
-                            // O saldo será atualizado quando o webhook confirmar o pagamento
-
-                            // Mostrar modal com QR code PIX para o usuário pagar
+                            // Mostrar modal com QR code PIX
                             setPixPaymentData({
                               qrCode: orderData.copy_past || '',
                               paymentImage: orderData.payment || '',
@@ -5488,11 +5612,9 @@ const TradingPage: React.FC = () => {
                             });
                             setDepositPaymentStatus('pending');
 
-                            // Fechar modal de depósito e abrir modal de pagamento PIX
                             setShowDepositModal(false);
                             setShowPixPaymentModal(true);
 
-                            // Resetar estados do formulário
                             setDepositStep('method');
                             setSelectedGateway(null);
                             setDepositAmount(20);
@@ -5500,12 +5622,17 @@ const TradingPage: React.FC = () => {
                             setCpf('');
                             setAcceptedTerms(false);
 
-                            toast.success(
-                              `Pedido de depósito criado! Complete o pagamento PIX para finalizar.`,
-                              { id: 'deposit-processing', duration: 5000 }
-                            );
+                            toast.dismiss('deposit-processing');
+                            toast.custom((t) => (
+                              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                                style={{ background: 'linear-gradient(135deg, #052e16 0%, #064e3b 100%)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                                <p style={{ color: '#d1fae5', fontSize: '13px', fontWeight: 500, margin: 0 }}>
+                                  Pedido criado! Complete o pagamento PIX para finalizar.
+                                </p>
+                              </div>
+                            ), { duration: 4000, position: 'top-right' });
                           } else {
-                            // Se a API não retornar sucesso, criar como pending
+                            // API não retornou sucesso, criar como pending
                             await supabase
                               .from('deposits')
                               .insert({
@@ -5516,10 +5643,13 @@ const TradingPage: React.FC = () => {
                                 transaction_id: orderData.external_id?.toString() || null,
                               });
 
-                            toast.success(
-                              `Pedido de depósito criado. Aguardando confirmação do pagamento.`,
-                              { id: 'deposit-processing', duration: 5000 }
-                            );
+                            toast.dismiss('deposit-processing');
+                            toast.custom((t) => (
+                              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                                style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                                <p style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: 500, margin: 0 }}>Pedido criado. Aguardando confirmação do pagamento.</p>
+                              </div>
+                            ), { duration: 4000, position: 'top-right' });
 
                             setShowDepositModal(false);
                             setDepositStep('method');
@@ -5536,20 +5666,29 @@ const TradingPage: React.FC = () => {
                             .insert({
                               user_id: user.id,
                               amount: depositAmount,
-                              method: gatewayData.type,
+                              method: selectedGateway.type || 'other',
                               status: 'pending',
                               admin_notes: `CPF: ${cpf}`,
                             });
 
                           if (depositError) {
-                            toast.error('Erro ao criar pedido de depósito', { id: 'deposit-processing' });
+                            toast.dismiss('deposit-processing');
+                            toast.custom((t) => (
+                              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                                style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                                <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>Erro ao criar pedido de depósito</p>
+                              </div>
+                            ), { duration: 3000, position: 'top-right' });
                             return;
                           }
 
-                          toast.success(
-                            `Pedido de depósito de ${formatCurrency(depositAmount)} criado. Aguardando aprovação.`,
-                            { id: 'deposit-processing', duration: 5000 }
-                          );
+                          toast.dismiss('deposit-processing');
+                          toast.custom((t) => (
+                            <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                              style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                              <p style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: 500, margin: 0 }}>Depósito de {formatCurrency(depositAmount)} criado. Aguardando aprovação.</p>
+                            </div>
+                          ), { duration: 4000, position: 'top-right' });
 
                           setShowDepositModal(false);
                           setDepositStep('method');
@@ -5561,10 +5700,13 @@ const TradingPage: React.FC = () => {
                         }
                       } catch (error: any) {
                         console.error('Error:', error instanceof Error ? error.message : 'Unknown');
-                        toast.error(
-                          error.message || 'Erro ao processar depósito. Tente novamente.',
-                          { id: 'deposit-processing', duration: 5000 }
-                        );
+                        toast.dismiss('deposit-processing');
+                        toast.custom((t) => (
+                          <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                            style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                            <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>{error.message || 'Erro ao processar depósito'}</p>
+                          </div>
+                        ), { duration: 4000, position: 'top-right' });
                       }
                     }}
                     disabled={!cpf || cpf.length !== 11 || !acceptedTerms}
@@ -5630,8 +5772,22 @@ const TradingPage: React.FC = () => {
 
                 {/* Valor */}
                 <div className="text-center">
-                  <p className="text-xs sm:text-sm text-gray-400 mb-2">Valor a pagar</p>
-                  <p className="text-2xl sm:text-3xl font-bold text-white">{formatCurrency(pixPaymentData.amount)}</p>
+                  {pixPaymentData.totalParts && pixPaymentData.totalParts > 1 ? (
+                    <>
+                      <p className="text-xs sm:text-sm text-gray-400 mb-1">
+                        Pagamento {pixPaymentData.currentPart} de {pixPaymentData.totalParts}
+                      </p>
+                      <p className="text-2xl sm:text-3xl font-bold text-white">{formatCurrency(pixPaymentData.amount)}</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Total: {formatCurrency(pixPaymentData.totalAmount || 0)}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs sm:text-sm text-gray-400 mb-2">Valor a pagar</p>
+                      <p className="text-2xl sm:text-3xl font-bold text-white">{formatCurrency(pixPaymentData.amount)}</p>
+                    </>
+                  )}
                 </div>
 
                 {/* QR Code - Ocultar quando pagamento confirmado */}
@@ -5667,7 +5823,12 @@ const TradingPage: React.FC = () => {
                         onClick={async () => {
                           try {
                             await navigator.clipboard.writeText(pixPaymentData.qrCode);
-                            toast.success('Código PIX copiado!', { duration: 2000 });
+                            toast.custom((t) => (
+                              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                                style={{ background: 'linear-gradient(135deg, #052e16 0%, #064e3b 100%)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                                <p style={{ color: '#d1fae5', fontSize: '13px', fontWeight: 500, margin: 0 }}>Código PIX copiado!</p>
+                              </div>
+                            ), { duration: 2000, position: 'top-right' });
                           } catch (error) {
                             // Fallback para navegadores mais antigos
                             const textArea = document.createElement('textarea');
@@ -5676,7 +5837,12 @@ const TradingPage: React.FC = () => {
                             textArea.select();
                             document.execCommand('copy');
                             document.body.removeChild(textArea);
-                            toast.success('Código PIX copiado!', { duration: 2000 });
+                            toast.custom((t) => (
+                              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                                style={{ background: 'linear-gradient(135deg, #052e16 0%, #064e3b 100%)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                                <p style={{ color: '#d1fae5', fontSize: '13px', fontWeight: 500, margin: 0 }}>Código PIX copiado!</p>
+                              </div>
+                            ), { duration: 2000, position: 'top-right' });
                           }
                         }}
                         className="absolute top-2 right-2 p-1.5 sm:p-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
@@ -5714,13 +5880,27 @@ const TradingPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Botão Fechar */}
-                <button
-                  onClick={() => setShowPixPaymentModal(false)}
-                  className="w-full py-2.5 sm:py-3 bg-gray-700 hover:bg-gray-600 text-white text-sm sm:text-base font-medium rounded-lg transition-colors"
-                >
-                  Fechar
-                </button>
+                {/* Botões de ação */}
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setShowPixPaymentModal(false)}
+                    className="w-full py-2.5 sm:py-3 bg-gray-700 hover:bg-gray-600 text-white text-sm sm:text-base font-medium rounded-lg transition-colors"
+                  >
+                    Minimizar
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm('Tem certeza que deseja cancelar esta ordem? Os dados do PIX serão perdidos.')) {
+                        setShowPixPaymentModal(false);
+                        setPixPaymentData(null);
+                        setDepositPaymentStatus(null);
+                      }
+                    }}
+                    className="w-full py-2 sm:py-2.5 bg-transparent hover:bg-red-500/10 text-red-400 hover:text-red-300 text-xs sm:text-sm font-medium rounded-lg transition-colors border border-red-500/20 hover:border-red-500/40"
+                  >
+                    Cancelar ordem
+                  </button>
+                </div>
               </div>
             </div>
           </div>

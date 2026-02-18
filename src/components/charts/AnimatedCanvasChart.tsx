@@ -157,35 +157,24 @@ function getTimeFrameInSeconds(timeframe: Timeframe): number {
  * - 1d, 1w, 1M: Menos velocidade
  */
 function getAdjustedAcceleration(timeFrameInSeconds: number): number {
-  // Definir grupos de time frames e seus níveis de aceleração
+  // Aceleração mais alta = preço visual chega ao alvo mais rápido (menos "escorregadio")
   const accelerationLevels: Record<number, number> = {
-    // Velocidade padrão: 1min, 2min
-    60: 0.15,   // 1min
-    120: 0.15,  // 2min
-    
-    // Pouco menos velocidade: 5min, 10min, 15min
-    300: 0.12,  // 5min
-    600: 0.12,  // 10min
-    900: 0.12,  // 15min
-    
-    // Menos velocidade: 30min, 1h, 2h
-    1800: 0.08,  // 30min
-    3600: 0.08,  // 1h
-    7200: 0.08,  // 2h
-    
-    // Menos velocidade: 4h, 8h, 12h
-    14400: 0.05,  // 4h
-    28800: 0.05,  // 8h
-    43200: 0.05,  // 12h
-    
-    // Menos velocidade: 1d, 1w, 1M
-    86400: 0.03,      // 1d
-    604800: 0.03,     // 1w
-    2592000: 0.03,    // 1M (30 dias)
+    60: 0.35,   // 1min — rápido
+    120: 0.35,  // 2min
+    300: 0.28,  // 5min
+    600: 0.28,  // 10min
+    900: 0.28,  // 15min
+    1800: 0.20, // 30min
+    3600: 0.20, // 1h
+    7200: 0.20, // 2h
+    14400: 0.15, // 4h
+    28800: 0.15, // 8h
+    43200: 0.15, // 12h
+    86400: 0.10,     // 1d
+    604800: 0.10,    // 1w
+    2592000: 0.10,   // 1M
   };
-  
-  // Retornar aceleração específica do grupo ou valor padrão
-  return accelerationLevels[timeFrameInSeconds] || 0.12;
+  return accelerationLevels[timeFrameInSeconds] || 0.28;
 }
 
 /**
@@ -195,35 +184,24 @@ function getAdjustedAcceleration(timeFrameInSeconds: number): number {
  * Time frames curtos: jitter normal (movimento mais "vivo")
  */
 function getAdjustedJitter(timeFrameInSeconds: number): number {
-  // Definir grupos de time frames e seus níveis de jitter
+  // Jitter reduzido — menos "tremor" cosmético, movimento mais preciso
   const jitterLevels: Record<number, number> = {
-    // Jitter padrão: 1min, 2min
-    60: 0.0000015,   // 1min
-    120: 0.0000015,  // 2min
-    
-    // Pouco menos jitter: 5min, 10min, 15min
-    300: 0.000001,   // 5min
-    600: 0.000001,   // 10min
-    900: 0.000001,   // 15min
-    
-    // Menos jitter: 30min, 1h, 2h
-    1800: 0.0000005,  // 30min
-    3600: 0.0000005,  // 1h
-    7200: 0.0000005,  // 2h
-    
-    // Menos jitter: 4h, 8h, 12h
-    14400: 0.0000002,  // 4h
-    28800: 0.0000002,  // 8h
-    43200: 0.0000002,  // 12h
-    
-    // Menos jitter: 1d, 1w, 1M
-    86400: 0.0000001,     // 1d
-    604800: 0.0000001,    // 1w
-    2592000: 0.0000001,   // 1M (30 dias)
+    60: 0.0000005,   // 1min
+    120: 0.0000005,  // 2min
+    300: 0.0000003,  // 5min
+    600: 0.0000003,  // 10min
+    900: 0.0000003,  // 15min
+    1800: 0.0000001, // 30min
+    3600: 0.0000001, // 1h
+    7200: 0.0000001, // 2h
+    14400: 0.00000005,  // 4h
+    28800: 0.00000005,  // 8h
+    43200: 0.00000005,  // 12h
+    86400: 0.00000002,     // 1d
+    604800: 0.00000002,    // 1w
+    2592000: 0.00000002,   // 1M
   };
-  
-  // Retornar jitter específico do grupo ou valor padrão
-  return jitterLevels[timeFrameInSeconds] || 0.000001;
+  return jitterLevels[timeFrameInSeconds] || 0.0000003;
 }
 
 /**
@@ -328,6 +306,20 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     const firstTickAfterHistoryRef = useRef(true); // Flag para sincronizar primeiro ticket após histórico
     const lastProcessedTickRef = useRef<number | null>(null); // Rastrear último tick processado (por timestamp)
     
+    // CRYPTO: Detectar se o ativo é crypto (recebe isClosed da Binance)
+    // Para crypto, live candles só devem ser criados pelo tick useEffect (via isClosed)
+    // checkAndCreateLiveCandle e drawChart fallback NÃO devem criar live candles para crypto
+    const isCryptoAssetRef = useRef(false);
+    
+    // Layout do gráfico — atualizado pelo drawChart a cada frame
+    // Os handlers de mouse usam estes valores para coordenadas consistentes
+    const chartLayoutRef = useRef({
+      chartX: 40, chartY: 40,
+      chartWidth: 800, chartHeight: 400,
+      actualMinPrice: 0, actualMaxPrice: 1,
+      actualPriceRange: 1,
+    });
+    
     // Motor de Física de Partículas - Candle Engine
     // Sistema que mantém o candle sempre em movimento, nunca estático
     const candleEngineRef = useRef<{
@@ -345,9 +337,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       visualPrice: 0,
       velocity: 0,
       inertia: 0,
-      friction: 0.65,         // Valores calibrados para BTC (mais "pesado")
-      acceleration: 0.03,     // Atração bem suave
-      jitter: 0.000001,        // Quase imperceptível
+      friction: 0.45,         // Mais resistência = menos derrapagem
+      acceleration: 0.35,     // Atração forte = chega rápido ao alvo
+      jitter: 0.0000003,      // Micro-tremor mínimo
       lastTickTime: Date.now(),
       lastFrameTime: performance.now()
     });
@@ -696,45 +688,38 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const priceDistance = Math.abs(engine.realPrice - engine.visualPrice);
       const priceRange = engine.realPrice * 0.001; // 0.1% do preço como referência
       
-      // SMOOTHING FACTOR DINÂMICO: Se a distância for grande (gap), aumenta velocidade
-      // Se estiver perto, diminui quase a zero para evitar jittering excessivo
+      // SMOOTHING FACTOR DINÂMICO:
+      // Gap grande → atração máxima (chega rápido)
+      // Perto do alvo → atração moderada (sem tremor)
       let smoothingFactor = engine.acceleration;
       if (priceDistance > priceRange * 2) {
-        // Gap grande: aumentar velocidade
-        smoothingFactor = engine.acceleration * 1.5;
-      } else if (priceDistance < priceRange * 0.1) {
-        // Muito perto: reduzir quase a zero para evitar tremor
-        smoothingFactor = engine.acceleration * 0.3;
+        smoothingFactor = engine.acceleration * 2.0;
+      } else if (priceDistance < priceRange * 0.05) {
+        smoothingFactor = engine.acceleration * 0.15;
       }
 
-      // 1. FORÇA DE ATRAÇÃO (O Ímã) - Multiplicada pelo dt para velocidade constante
-      let attraction = (engine.realPrice - engine.visualPrice) * (smoothingFactor * dt);
+      // 1. FORÇA DE ATRAÇÃO — direto ao alvo
+      const attraction = (engine.realPrice - engine.visualPrice) * (smoothingFactor * dt);
 
-      // 2. MICRO-PULSO ALEATÓRIO (O Jitter) - Apenas quando muito perto do alvo
+      // 2. MICRO-PULSO — apenas cosmético quando muito perto
       let pulse = 0;
-      if (priceDistance < priceRange * 0.2) {
-        // Jitter apenas quando está muito perto (movimento "vivo" sutil)
+      if (priceDistance < priceRange * 0.1) {
         pulse = (Math.random() - 0.5) * (engine.realPrice * engine.jitter * dt);
       }
 
-      // 3. LÓGICA DE INÉRCIA
-      // Se não recebemos tickets há mais de 150ms, a inércia mantém o movimento suave
+      // 3. INÉRCIA REDUZIDA — quase nenhuma derrapagem
       let finalForce = attraction + pulse;
-      
-      if (timeSinceLastTick > 150) {
-        // Simula o preço "derrapando" levemente na última direção
-        finalForce += engine.inertia * 0.05 * dt;
+      if (timeSinceLastTick > 200) {
+        finalForce += engine.inertia * 0.01 * dt;
       }
 
-      // 4. INTEGRAÇÃO DE VELOCIDADE COM DELTA TIME
-      // Atrito ajustado pelo dt para manter comportamento consistente
+      // 4. INTEGRAÇÃO COM ATRITO FORTE
       const currentFriction = Math.pow(engine.friction, dt);
       engine.velocity = (engine.velocity + finalForce) * currentFriction;
 
-      // 5. ATUALIZAÇÃO DA POSIÇÃO VISUAL - Multiplicada pelo dt
+      // 5. ATUALIZAÇÃO DA POSIÇÃO VISUAL
       engine.visualPrice += engine.velocity * dt;
       
-      // Guardamos a velocidade atual como inércia para o próximo quadro
       engine.inertia = engine.velocity;
     }, []);
 
@@ -815,60 +800,99 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         onMarketStatusChange(marketStatus);
       }
     }, [marketStatus, onMarketStatusChange]);
-
-    // Processar ticks e criar/atualizar candles
+    
+    // CRYPTO: Confirmar detecção via marketStatus (chega antes dos ticks)
     useEffect(() => {
-      if (!lastTick || !historicalDataLoadedRef.current) {
-        return; // Aguardar dados históricos antes de processar ticks
+      if (marketStatus && marketStatus.category === 'crypto') {
+        isCryptoAssetRef.current = true;
       }
+    }, [marketStatus]);
+
+    // ===== PROCESSAMENTO DE TICKS — SIMPLIFICADO =====
+    // Lógica clara em 2 caminhos:
+    // - Crypto (Binance): usa isClosed da API para saber quando fechar candle
+    // - Forex/OTC: usa cálculo de período temporal
+    // Regra de ouro: open do live candle = close do último candle no histórico. Sempre.
+    
+    // Helper: limpar todos os caches de interpolação de live candles
+    const clearLiveCandleCache = useCallback(() => {
+      const keysToDelete: number[] = [];
+      interpolatedCandlesRef.current.forEach((_, key) => {
+        if (key < 0) keysToDelete.push(key);
+      });
+      keysToDelete.forEach(key => interpolatedCandlesRef.current.delete(key));
+    }, []);
+    
+    // Helper: congelar live candle atual no histórico
+    const freezeLiveCandle = useCallback(() => {
+      if (!liveCandleRef.current) return;
+      
+      const engine = candleEngineRef.current;
+      const finalClose = engine.visualPrice > 0 ? engine.visualPrice : liveCandleRef.current.close;
+      const high = Math.max(liveCandleRef.current.high, finalClose);
+      const low = Math.min(liveCandleRef.current.low, finalClose);
+      const close = Math.max(low, Math.min(high, finalClose));
+      
+      const closedCandle: CandleData = {
+        time: liveCandleRef.current.time,
+        open: liveCandleRef.current.open,
+        high, low, close,
+      };
+      
+      candlesRef.current = [...candlesRef.current, closedCandle];
+      liveCandleRef.current = null;
+      clearLiveCandleCache();
+      
+      // Ajustar viewport
+      if (viewportRef.current.isAtEnd) {
+        const maxStart = Math.max(0, candlesRef.current.length - viewportRef.current.visibleCandleCount);
+        viewportRef.current.visibleStartIndex = maxStart;
+      }
+    }, [clearLiveCandleCache]);
+    
+    // Helper: criar novo live candle (open = close do último histórico)
+    const createLiveCandle = useCallback((periodStart: number, tickPrice: number, tickTime: number) => {
+      if (candlesRef.current.length === 0) return;
+      
+      const prevClose = candlesRef.current[candlesRef.current.length - 1].close;
+      
+      liveCandleRef.current = {
+        time: periodStart,
+        open: prevClose,  // REGRA DE OURO: open = close anterior
+        high: Math.max(prevClose, tickPrice),
+        low: Math.min(prevClose, tickPrice),
+        close: tickPrice,
+      };
+      
+      clearLiveCandleCache();
+      
+      // Resetar motor de física
+      const engine = candleEngineRef.current;
+      engine.realPrice = tickPrice;
+      engine.visualPrice = tickPrice;
+      engine.velocity = 0;
+      engine.inertia = 0;
+      engine.lastTickTime = tickTime;
+    }, [clearLiveCandleCache]);
+
+    useEffect(() => {
+      if (!lastTick || !historicalDataLoadedRef.current) return;
 
       const tick = lastTick;
-      const tickTime = tick.timestamp;
       const tickPrice = tick.price;
+      const tickTime = tick.timestamp;
 
-      // CRÍTICO: Evitar processar o mesmo tick múltiplas vezes
-      // O useEffect pode ser executado várias vezes por re-renders, mas o tick é o mesmo
-      if (lastProcessedTickRef.current === tickTime) {
-        return; // Já processamos este tick
-      }
+      // Evitar processar mesmo tick 2x
+      if (lastProcessedTickRef.current === tickTime) return;
       lastProcessedTickRef.current = tickTime;
 
-      // Obter o período do candle baseado no timeframe
-      const timeframeMsMap: Record<Timeframe, number> = {
-        '1m': 60000,
-        '2m': 120000,
-        '5m': 300000,
-        '10m': 600000,
-        '15m': 900000,
-        '30m': 1800000,
-        '1h': 3600000,
-        '2h': 7200000,
-        '4h': 14400000,
-        '8h': 28800000,
-        '12h': 43200000,
-        '1d': 86400000,
-        '1w': 604800000,
-        '1M': 2592000000, // 30 dias
-      };
-      const timeframeMs = timeframeMsMap[timeframe] || 60000;
-      
-      // Calcular o início do período do candle para este tick
-      const candlePeriodStart = getBarTime(tickTime, timeframe);
-
-      // Verificar se já existe um candle para este período
+      // Sem candles ainda — criar o primeiro
       if (candlesRef.current.length === 0) {
-        // Se não há candles, criar o primeiro
-        const newCandle: CandleData = {
-          time: candlePeriodStart,
-          open: tickPrice,
-          high: tickPrice,
-          low: tickPrice,
-          close: tickPrice,
-        };
-        candlesRef.current = [newCandle];
-        lastCandleTimeRef.current = candlePeriodStart;
-        
-        // Inicializar motor de física
+        const periodStart = getBarTime(tickTime, timeframe);
+        candlesRef.current = [{
+          time: periodStart, open: tickPrice, high: tickPrice, low: tickPrice, close: tickPrice,
+        }];
+        lastCandleTimeRef.current = periodStart;
         const engine = candleEngineRef.current;
         engine.realPrice = tickPrice;
         engine.visualPrice = tickPrice;
@@ -876,196 +900,114 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         engine.inertia = 0;
         engine.lastTickTime = tickTime;
         engine.lastFrameTime = performance.now();
-        
+        if (onPriceUpdate) onPriceUpdate(tickPrice);
         return;
       }
 
-      const lastCandle = candlesRef.current[candlesRef.current.length - 1];
-      const lastCandlePeriodStart = getBarTime(lastCandle.time, timeframe);
-
-      if (candlePeriodStart > lastCandlePeriodStart) {
-        // CRÍTICO: Novo período iniciou - fechar o live candle anterior e adicionar ao histórico
-        // Isso garante que o candle anterior seja fixo e não se mova mais
-        if (liveCandleRef.current) {
-          // Fechar o live candle anterior usando o visualPrice final do motor de física
+      // ===== CAMINHO CRYPTO (Binance com isClosed) =====
+      if (tick.isClosed !== undefined) {
+        // Marcar como ativo crypto — impede checkAndCreateLiveCandle e drawChart fallback
+        // de criar live candles prematuramente (crypto usa APENAS isClosed)
+        isCryptoAssetRef.current = true;
+        
+        if (tick.isClosed) {
+          // Candle FECHOU — finalizar e NÃO criar novo live candle ainda
+          // Isso garante que o próximo live candle será criado com open = este close
+          if (liveCandleRef.current) {
+            // Usar o close real da Binance como close final
+            liveCandleRef.current.close = tickPrice;
+            liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
+            liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
+            
+            // Verificar se é referência compartilhada (candle já está no candlesRef)
+            const lastHist = candlesRef.current[candlesRef.current.length - 1];
+            if (lastHist === liveCandleRef.current) {
+              // REFERÊNCIA COMPARTILHADA: candle já está no histórico, só limpar liveCandleRef
+              liveCandleRef.current = null;
+              clearLiveCandleCache();
+            } else {
+              // Objeto separado (criado via createLiveCandle): usar freezeLiveCandle para adicionar ao histórico
+              freezeLiveCandle();
+            }
+          }
+          // Motor de física: atualizar com close final
           const engine = candleEngineRef.current;
-          const finalClose = engine.visualPrice > 0 ? engine.visualPrice : liveCandleRef.current.close;
-          
-          // CRÍTICO: Garantir consistência entre high, low e close para evitar bug visual
-          // Se houve movimento rápido antes do fechamento, garantir que close esteja entre low e high
-          // e que não haja inconsistências que causem cores misturadas
-          const consistentHigh = Math.max(liveCandleRef.current.high, finalClose);
-          const consistentLow = Math.min(liveCandleRef.current.low, finalClose);
-          const consistentClose = Math.max(consistentLow, Math.min(consistentHigh, finalClose));
-          
-          // Criar candle fechado com os valores finais consistentes
-          const closedCandle: CandleData = {
-            time: liveCandleRef.current.time,
-            open: liveCandleRef.current.open, // Já está fixo
-            high: consistentHigh, // Garantir que high >= close
-            low: consistentLow, // Garantir que low <= close
-            close: consistentClose, // Garantir que close está entre low e high
-          };
-          
-          // Adicionar ao histórico
-          candlesRef.current = [...candlesRef.current, closedCandle];
-        }
-        
-        // IMPORTANTE: Usar o close do último candle histórico como open (padrão de candles)
-        // CRÍTICO: Salvar o close ANTES de qualquer atualização para garantir que seja fixo
-        const lastCandleClose = candlesRef.current[candlesRef.current.length - 1].close;
-        
-        // Criar novo Live Candle para o novo período
-        // O open deve ser FIXO e nunca mudar depois de criado
-        liveCandleRef.current = {
-          time: candlePeriodStart,
-          open: lastCandleClose, // FIXO: nunca mudar depois de criado
-          high: tickPrice,
-          low: tickPrice,
-          close: tickPrice, // Será atualizado pelo visualPrice no render para animação suave
-        };
-        
-        // Atualizar motor de física com novo preço
-        const engine = candleEngineRef.current;
-        engine.realPrice = tickPrice;
-        engine.visualPrice = tickPrice;
-        engine.velocity = 0;
-        engine.inertia = 0;
-        engine.lastTickTime = tickTime;
-        
-        // CRÍTICO: Limpar cache de interpolação do live candle anterior para evitar traço distante
-        // Quando um novo live candle é criado, o cache pode ter valores do candle anterior
-        // que causam o problema do traço aparecer longe do último candle antes de ser corrigido
-        // CRÍTICO: Limpar TODOS os caches relacionados a live candles para garantir renderização limpa
-        const timeframeMsMap: Record<Timeframe, number> = {
-          '1m': 60000, '2m': 120000, '5m': 300000, '10m': 600000,
-          '15m': 900000, '30m': 1800000, '1h': 3600000, '2h': 7200000,
-          '4h': 14400000, '8h': 28800000, '12h': 43200000,
-          '1d': 86400000, '1w': 604800000, '1M': 2592000000,
-        };
-        const periodMs = timeframeMsMap[timeframe] || 60000;
-        
-        // Limpar cache do live candle anterior (período anterior)
-        const oldLiveCandleKey = -(Math.floor((candlePeriodStart - periodMs) / 1000));
-        if (interpolatedCandlesRef.current.has(oldLiveCandleKey)) {
-          interpolatedCandlesRef.current.delete(oldLiveCandleKey);
-        }
-        
-        // CRÍTICO: Limpar TODOS os caches relacionados ao novo período para garantir renderização limpa
-        // Limpar múltiplas chaves possíveis para garantir que não há valores antigos
-        const newLiveCandleKey = -(Math.floor(candlePeriodStart / 1000));
-        const possibleKeys = [
-          newLiveCandleKey,
-          -(Math.floor((candlePeriodStart - 1) / 1000)),
-          -(Math.floor((candlePeriodStart + 1) / 1000)),
-          -(Math.floor((candlePeriodStart - periodMs) / 1000)),
-          -(Math.floor((candlePeriodStart - periodMs - 1) / 1000)),
-          -(Math.floor((candlePeriodStart - periodMs + 1) / 1000)),
-        ];
-        possibleKeys.forEach(key => {
-          if (interpolatedCandlesRef.current.has(key)) {
-            interpolatedCandlesRef.current.delete(key);
-          }
-        });
-        
-        // CRÍTICO: Limpar também TODOS os caches com chaves negativas (todos os live candles)
-        // Isso garante que não há valores antigos de live candles anteriores causando problemas
-        const keysToDelete: number[] = [];
-        interpolatedCandlesRef.current.forEach((value, key) => {
-          if (key < 0) {
-            keysToDelete.push(key);
-          }
-        });
-        keysToDelete.forEach(key => {
-          interpolatedCandlesRef.current.delete(key);
-        });
-        
-        // Ajustar viewport se estava no final
-        if (viewportRef.current.isAtEnd) {
-          const maxStartIndex = Math.max(0, candlesRef.current.length - viewportRef.current.visibleCandleCount);
-          viewportRef.current.visibleStartIndex = maxStartIndex;
-        }
-      } else if (candlePeriodStart === lastCandlePeriodStart) {
-        // Mesmo período - atualizar Live Candle em tempo real
-        const engine = candleEngineRef.current;
-        engine.realPrice = tickPrice;
-        engine.lastTickTime = tickTime;
-        
-        // CRÍTICO: Se o live candle não existe, criar com o close do último candle histórico
-        // Mas se já existe, NÃO recriar e NÃO mudar o open (que já está fixo)
-        if (!liveCandleRef.current || liveCandleRef.current.time !== candlePeriodStart) {
-          // Criar novo Live Candle para o período atual
-          // IMPORTANTE: Usar o close do último candle histórico como open
-          const lastCandleClose = lastCandle.close;
-          liveCandleRef.current = {
-            time: candlePeriodStart,
-            open: lastCandleClose, // FIXO: nunca mudar depois de criado
-            high: tickPrice,
-            low: tickPrice,
-            close: tickPrice, // Será atualizado pelo visualPrice no render para animação suave
-          };
-          
-          // CRÍTICO: Limpar cache de interpolação quando criar live candle aqui também
-          // Isso garante que não há valores antigos do cache causando traço distante
-          // Mesma lógica do useEffect de verificação periódica para garantir consistência
-          const timeframeMsMap: Record<Timeframe, number> = {
-            '1m': 60000, '2m': 120000, '5m': 300000, '10m': 600000,
-            '15m': 900000, '30m': 1800000, '1h': 3600000, '2h': 7200000,
-            '4h': 14400000, '8h': 28800000, '12h': 43200000,
-            '1d': 86400000, '1w': 604800000, '1M': 2592000000,
-          };
-          const periodMs = timeframeMsMap[timeframe] || 60000;
-          
-          // Limpar cache do live candle anterior (período anterior)
-          const oldLiveCandleKey = -(Math.floor((candlePeriodStart - periodMs) / 1000));
-          if (interpolatedCandlesRef.current.has(oldLiveCandleKey)) {
-            interpolatedCandlesRef.current.delete(oldLiveCandleKey);
-          }
-          
-          // CRÍTICO: Limpar TODOS os caches relacionados ao novo período para garantir renderização limpa
-          const newLiveCandleKey = -(Math.floor(candlePeriodStart / 1000));
-          const possibleKeys = [
-            newLiveCandleKey,
-            -(Math.floor((candlePeriodStart - 1) / 1000)),
-            -(Math.floor((candlePeriodStart + 1) / 1000)),
-            -(Math.floor((candlePeriodStart - periodMs) / 1000)),
-            -(Math.floor((candlePeriodStart - periodMs - 1) / 1000)),
-            -(Math.floor((candlePeriodStart - periodMs + 1) / 1000)),
-          ];
-          possibleKeys.forEach(key => {
-            if (interpolatedCandlesRef.current.has(key)) {
-              interpolatedCandlesRef.current.delete(key);
-            }
-          });
-          
-          // CRÍTICO: Limpar também TODOS os caches com chaves negativas (todos os live candles)
-          const keysToDelete: number[] = [];
-          interpolatedCandlesRef.current.forEach((value, key) => {
-            if (key < 0) {
-              keysToDelete.push(key);
-            }
-          });
-          keysToDelete.forEach(key => {
-            interpolatedCandlesRef.current.delete(key);
-          });
+          engine.realPrice = tickPrice;
+          engine.lastTickTime = tickTime;
         } else {
-          // Atualizar Live Candle existente - NUNCA mudar o open
-          // O open já está fixo desde a criação
-          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
-          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
-          // Não atualizar close aqui - será atualizado pelo visualPrice no render
-          // NUNCA atualizar open - ele deve ser fixo
+          // Candle EM FORMAÇÃO — atualizar ou criar live candle
+          const periodStart = getBarTime(tickTime, timeframe);
+          
+          if (!liveCandleRef.current) {
+            // Não existe live candle — verificar se o último candle histórico é do mesmo período
+            const lastHist = candlesRef.current[candlesRef.current.length - 1];
+            const lastHistPeriod = lastHist ? getBarTime(lastHist.time, timeframe) : 0;
+            
+            if (lastHist && periodStart === lastHistPeriod) {
+              // REFERÊNCIA COMPARTILHADA: apontar liveCandleRef para o candle já existente no histórico
+              // Sem pop — o candle fica no candlesRef E no liveCandleRef (mesmo objeto)
+              liveCandleRef.current = lastHist;
+              liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
+              liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
+              liveCandleRef.current.close = tickPrice;
+              const engine = candleEngineRef.current;
+              engine.realPrice = tickPrice;
+              engine.visualPrice = tickPrice;
+              engine.velocity = 0;
+              engine.inertia = 0;
+              engine.lastTickTime = tickTime;
+            } else {
+              // Período diferente — criar novo live candle separado (open = close do último histórico)
+              createLiveCandle(periodStart, tickPrice, tickTime);
+            }
+          } else {
+            // SAFETY NET: Detectar mudança de período mesmo sem ter recebido isClosed=true
+            // Isso cobre o caso onde o sinal de fechamento foi perdido por qualquer motivo
+            const currentLivePeriod = getBarTime(liveCandleRef.current.time, timeframe);
+            if (periodStart > currentLivePeriod) {
+              // Período mudou! Congelar candle anterior e criar novo
+              liveCandleRef.current.close = tickPrice;
+              freezeLiveCandle();
+              createLiveCandle(periodStart, tickPrice, tickTime);
+            } else {
+              // Mesmo período — apenas atualizar high/low e motor de física
+              liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
+              liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
+              // close é atualizado pelo motor de física no drawChart
+              const engine = candleEngineRef.current;
+              engine.realPrice = tickPrice;
+              engine.lastTickTime = tickTime;
+            }
+          }
         }
       } else {
-        // Período anterior ao último histórico - não deve acontecer, mas limpar live candle se necessário
-        liveCandleRef.current = null;
+        // ===== CAMINHO FOREX/OTC (sem isClosed, usa período temporal) =====
+        const periodStart = getBarTime(tickTime, timeframe);
+        const lastCandle = candlesRef.current[candlesRef.current.length - 1];
+        const lastPeriod = getBarTime(lastCandle.time, timeframe);
+        
+        if (periodStart > lastPeriod) {
+          // Novo período — congelar live candle anterior, criar novo
+          if (liveCandleRef.current) {
+            freezeLiveCandle();
+          }
+          createLiveCandle(periodStart, tickPrice, tickTime);
+        } else {
+          // Mesmo período — atualizar live candle existente ou criar
+          if (!liveCandleRef.current) {
+            createLiveCandle(periodStart, tickPrice, tickTime);
+          } else {
+            liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
+            liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
+            const engine = candleEngineRef.current;
+            engine.realPrice = tickPrice;
+            engine.lastTickTime = tickTime;
+          }
+        }
       }
-      
-      // Notificar atualização de preço
-      if (onPriceUpdate) {
-        onPriceUpdate(tickPrice);
-      }
-    }, [lastTick, timeframe, onPriceUpdate]);
+
+      if (onPriceUpdate) onPriceUpdate(tickPrice);
+    }, [lastTick, timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle]);
 
     // CRÍTICO: Criar live candle imediatamente quando o período muda, sem esperar por tick
     // Isso elimina o delay na abertura do novo candle
@@ -1075,6 +1017,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
 
       const checkAndCreateLiveCandle = () => {
+        // CRYPTO: Não criar live candles por timer para crypto
+        // Crypto usa exclusivamente isClosed da Binance para gerenciar candles
+        if (isCryptoAssetRef.current) return;
+        
         const validCurrentTime = currentTimeRef.current instanceof Date ? currentTimeRef.current : new Date();
         const currentTime = validCurrentTime.getTime();
         const currentCandlePeriodStart = getBarTime(currentTime, timeframe);
@@ -1151,51 +1097,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             engine.inertia = 0;
             engine.lastTickTime = currentTime;
             
-            // CRÍTICO: Limpar cache de interpolação quando criar live candle aqui também
-            // Isso garante que não há valores antigos do cache causando traço distante
-            // Mesma lógica do useEffect de ticks para garantir consistência
-            const timeframeMsMap: Record<Timeframe, number> = {
-              '1m': 60000, '2m': 120000, '5m': 300000, '10m': 600000,
-              '15m': 900000, '30m': 1800000, '1h': 3600000, '2h': 7200000,
-              '4h': 14400000, '8h': 28800000, '12h': 43200000,
-              '1d': 86400000, '1w': 604800000, '1M': 2592000000,
-            };
-            const periodMs = timeframeMsMap[timeframe] || 60000;
-            
-            // Limpar cache do live candle anterior (período anterior)
-            const oldLiveCandleKey = -(Math.floor((currentCandlePeriodStart - periodMs) / 1000));
-            if (interpolatedCandlesRef.current.has(oldLiveCandleKey)) {
-              interpolatedCandlesRef.current.delete(oldLiveCandleKey);
-            }
-            
-            // CRÍTICO: Limpar TODOS os caches relacionados ao novo período para garantir renderização limpa
-            // Limpar múltiplas chaves possíveis para garantir que não há valores antigos
-            const newLiveCandleKey = -(Math.floor(currentCandlePeriodStart / 1000));
-            const possibleKeys = [
-              newLiveCandleKey,
-              -(Math.floor((currentCandlePeriodStart - 1) / 1000)),
-              -(Math.floor((currentCandlePeriodStart + 1) / 1000)),
-              -(Math.floor((currentCandlePeriodStart - periodMs) / 1000)),
-              -(Math.floor((currentCandlePeriodStart - periodMs - 1) / 1000)),
-              -(Math.floor((currentCandlePeriodStart - periodMs + 1) / 1000)),
-            ];
-            possibleKeys.forEach(key => {
-              if (interpolatedCandlesRef.current.has(key)) {
-                interpolatedCandlesRef.current.delete(key);
-              }
-            });
-            
-            // CRÍTICO: Limpar também TODOS os caches com chaves negativas (todos os live candles)
-            // Isso garante que não há valores antigos de live candles anteriores causando problemas
-            const keysToDelete: number[] = [];
-            interpolatedCandlesRef.current.forEach((value, key) => {
-              if (key < 0) {
-                keysToDelete.push(key);
-              }
-            });
-            keysToDelete.forEach(key => {
-              interpolatedCandlesRef.current.delete(key);
-            });
+            // Limpar caches de live candle para renderização limpa
+            clearLiveCandleCache();
           }
         }
       };
@@ -1215,6 +1118,13 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     const loadHistoricalData = async (): Promise<void> => {
       isLoadingRef.current = true; // Iniciar estado de carregamento
       historicalDataLoadedRef.current = false; // Resetar flag de dados carregados
+      liveCandleRef.current = null; // Resetar live candle ao trocar de ativo
+      
+      // CRYPTO: Detectar imediatamente por símbolo para bloquear checkAndCreateLiveCandle
+      // e drawChart fallback ANTES de qualquer timer executar
+      const cryptoBases = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'DOT', 'MATIC', 'LINK', 'LTC', 'AVAX', 'UNI', 'ATOM', 'SHIB', 'TRX'];
+      const base = symbol.split('/')[0]?.toUpperCase() || '';
+      isCryptoAssetRef.current = cryptoBases.includes(base);
       
       
       try {
@@ -1286,6 +1196,20 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               // Sempre começar mostrando os últimos candles (auto-scroll ativo)
               viewportRef.current.visibleStartIndex = Math.max(0, candlesRef.current.length - initialCandleCount);
               viewportRef.current.isAtEnd = true; // Marcar que está no final
+              
+              // CRYPTO: Usar REFERÊNCIA COMPARTILHADA para o candle em formação
+              // O último candle do histórico É o candle em formação — não remover, apenas apontar liveCandleRef para ele
+              // Isso garante: (1) sem delay, (2) sem duplicação, (3) sem conflito com cache de interpolação
+              if (isCryptoAssetRef.current && candlesRef.current.length > 1) {
+                const lastCandlePeriod = getBarTime(lastCandle.time, timeframe);
+                const currentPeriod = getBarTime(Date.now(), timeframe);
+                
+                if (lastCandlePeriod === currentPeriod) {
+                  // Apontar liveCandleRef para o MESMO OBJETO no candlesRef (referência compartilhada)
+                  // Quando drawChart atualizar liveCandleRef.current.close, também atualiza o candle no histórico
+                  liveCandleRef.current = candlesRef.current[candlesRef.current.length - 1];
+                }
+              }
             }
             
             // Calcular valores históricos dos indicadores
@@ -1372,35 +1296,42 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       // Isso cria movimento "mola" ou suavização que deixa o movimento orgânico e "escorregadio"
       // CRÍTICO: Garantir movimento contínuo mesmo quando não há novos ticks
       if (candlesRef.current.length > 0) {
-        // MOTOR DE FÍSICA: Usar visualPrice do motor (sempre em movimento)
         const engine = candleEngineRef.current;
         
-        // Atualizar física do candle
         updateCandlePhysics();
         
-        // Usar o preço visual do motor (sempre em movimento, nunca estático)
         const visualPrice = engine.visualPrice;
         
-        // Atualizar o último candle diretamente no array
-          const lastIndex = candlesRef.current.length - 1;
+        const lastIndex = candlesRef.current.length - 1;
         const lastCandle = candlesRef.current[lastIndex];
         
-        // Atualizar high, low e close com o preço visual do motor
-        lastCandle.high = Math.max(lastCandle.high, visualPrice);
-        lastCandle.low = Math.min(lastCandle.low, visualPrice);
-        lastCandle.close = visualPrice;
+        // GUARDA: Só atualizar candle se visualPrice for válido (> 0 e finito)
+        // Evita corromper high/low/close com 0 ou NaN quando motor ainda não inicializou
+        // CRYPTO FIX: Só atualizar o último candle do histórico se ele É o live candle (ref compartilhada)
+        // ou se não existe live candle separado. Se existe live candle separado, o candle do histórico
+        // já está FECHADO e não deve ser modificado.
+        const isSharedRef = liveCandleRef.current === lastCandle;
+        const hasSeparateLiveCandle = liveCandleRef.current && !isSharedRef;
         
-        // Atualizar indicadores com visualPrice (preço sempre em movimento)
-        const indicatorCandles: IndicatorCandleData[] = candlesRef.current.map(c => ({
-          time: c.time,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: (c as any).volume
-        }));
-        const indicatorResults = indicatorEngineRef.current.onTick(indicatorCandles, visualPrice);
-        indicatorValuesRef.current = indicatorResults;
+        if (visualPrice > 0 && isFinite(visualPrice) && !hasSeparateLiveCandle) {
+          lastCandle.high = Math.max(lastCandle.high, visualPrice);
+          lastCandle.low = Math.min(lastCandle.low, visualPrice);
+          lastCandle.close = visualPrice;
+        }
+        
+        // Atualizar indicadores (apenas com visualPrice válido)
+        if (visualPrice > 0 && isFinite(visualPrice)) {
+          const indicatorCandles: IndicatorCandleData[] = candlesRef.current.map(c => ({
+            time: c.time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: (c as any).volume
+          }));
+          const indicatorResults = indicatorEngineRef.current.onTick(indicatorCandles, visualPrice);
+          indicatorValuesRef.current = indicatorResults;
+        }
       }
       
       // Calcular tempo desde o último frame para interpolação "viva" e pulsante
@@ -1581,7 +1512,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
       
       // Fallback: se o período mudou e ainda não há live candle do novo período, criar imediatamente
-      if (viewport.isAtEnd && candles.length > 0) {
+      // CRYPTO: Não criar live candles via fallback — crypto usa exclusivamente isClosed
+      if (viewport.isAtEnd && candles.length > 0 && !isCryptoAssetRef.current) {
         const validCurrentTime = currentTimeRef.current instanceof Date ? currentTimeRef.current : new Date();
         const currentPeriodStart = getBarTime(validCurrentTime.getTime(), timeframe);
         
@@ -1654,23 +1586,31 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       let hasLiveCandle = false;
       
       // Incluir Live Candle se estiver visível (viewport no final)
-      // Se o último candle visível for do mesmo período, substituí-lo pelo live candle (evita frame sem live candle)
       if (liveCandleRef.current && viewport.isAtEnd) {
-        const liveCandleTime = liveCandleRef.current.time;
-        const liveCandlePeriod = getBarTime(liveCandleTime, timeframe);
         const lastVisibleIndex = visibleCandles.length - 1;
         const lastVisibleCandle = lastVisibleIndex >= 0 ? visibleCandles[lastVisibleIndex] : null;
-        const lastVisibleCandlePeriod = lastVisibleCandle ? getBarTime(lastVisibleCandle.time, timeframe) : null;
         
-        if (lastVisibleCandle && lastVisibleCandlePeriod === liveCandlePeriod) {
-          visibleCandles = [
-            ...visibleCandles.slice(0, lastVisibleIndex),
-            { ...liveCandleRef.current },
-          ];
+        // REFERÊNCIA COMPARTILHADA: se liveCandleRef aponta para o mesmo objeto que o último candle visível,
+        // NÃO adicionar novamente — ele já está em visibleCandles e é atualizado in-place
+        if (lastVisibleCandle && lastVisibleCandle === liveCandleRef.current) {
           hasLiveCandle = true;
         } else {
-          visibleCandles = [...visibleCandles, { ...liveCandleRef.current }];
-          hasLiveCandle = true;
+          // Objeto SEPARADO (criado via createLiveCandle após isClosed: true)
+          const liveCandlePeriod = getBarTime(liveCandleRef.current.time, timeframe);
+          const lastVisibleCandlePeriod = lastVisibleCandle ? getBarTime(lastVisibleCandle.time, timeframe) : null;
+          
+          if (lastVisibleCandle && lastVisibleCandlePeriod === liveCandlePeriod) {
+            // Mesmo período — substituir
+            visibleCandles = [
+              ...visibleCandles.slice(0, lastVisibleIndex),
+              { ...liveCandleRef.current },
+            ];
+            hasLiveCandle = true;
+          } else {
+            // Período novo — adicionar ao final
+            visibleCandles = [...visibleCandles, { ...liveCandleRef.current }];
+            hasLiveCandle = true;
+          }
         }
       }
       
@@ -1795,14 +1735,18 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
 
       // Calcular preços min/max dos candles visíveis (incluindo Live Candle se presente)
-      const prices = visibleCandles.flatMap(c => [c.open, c.high, c.low, c.close]);
+      const prices = visibleCandles.flatMap(c => [c.open, c.high, c.low, c.close]).filter(p => isFinite(p) && p > 0);
+      if (prices.length === 0) return; // Sem dados válidos para desenhar
       const minPrice = Math.min(...prices);
       const maxPrice = Math.max(...prices);
       const priceRange = maxPrice - minPrice;
-      const pricePadding = priceRange * 0.1;
+      const pricePadding = Math.max(priceRange * 0.1, minPrice * 0.0001); // Padding mínimo para evitar range zero
       const actualMinPrice = minPrice - pricePadding;
       const actualMaxPrice = maxPrice + pricePadding;
       const actualPriceRange = actualMaxPrice - actualMinPrice;
+
+      // Atualizar layout ref para handlers de mouse
+      chartLayoutRef.current = { chartX, chartY, chartWidth, chartHeight, actualMinPrice, actualMaxPrice, actualPriceRange };
 
       // Desenhar fundo da régua de preços (lado direito) - igual ao TradingView
       // Fundo da mesma cor do gráfico (preto)
@@ -5380,13 +5324,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
       
       try {
-        // Atualizar animação do viewport se estiver em andamento
         updateViewportAnimation();
-        // Atualizar física do candle (sempre em movimento)
-        updateCandlePhysics();
-        drawChart();
+        drawChart(); // drawChart já chama updateCandlePhysics internamente
       } catch (error) {
-        console.error('Chart render error');
+        console.error('Chart render error:', error instanceof Error ? error.message : error, error instanceof Error ? error.stack : '');
       }
       
       // CRÍTICO: Sempre agendar próximo frame para animação contínua
@@ -5597,12 +5538,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
         
-        // Verificar se o clique está dentro da área do gráfico
-        const padding = { left: 60, right: 90, top: 20, bottom: 60 };
-        const chartX = padding.left;
-        const chartY = padding.top;
-        const chartWidth = rect.width - padding.left - padding.right;
-        const chartHeight = rect.height - padding.top - padding.bottom;
+        // Usar layout real do gráfico (atualizado pelo drawChart a cada frame)
+        const { chartX, chartY, chartWidth, chartHeight } = chartLayoutRef.current;
         
         // Se o clique está fora da área do gráfico, não processar
         if (mouseX < chartX || mouseX > chartX + chartWidth || mouseY < chartY || mouseY > chartY + chartHeight) {
@@ -5624,13 +5561,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             );
             
             if (visibleCandles.length > 0) {
-              const prices = visibleCandles.flatMap(c => [c.open, c.high, c.low, c.close]);
-              const minPrice = Math.min(...prices);
-              const maxPrice = Math.max(...prices);
-              const priceRange = maxPrice - minPrice;
-              const pricePadding = priceRange * 0.1;
-              const actualMinPrice = minPrice - pricePadding;
-              const actualMaxPrice = maxPrice + pricePadding;
+              const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
               
               const clickedPrice = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
               const clickedTime = getTimeFromX(mouseX, chartX, chartWidth, visibleCandles);
@@ -5644,15 +5575,16 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   const point = tool.points[0];
                   let y: number;
                   if (point.price !== undefined) {
-                    y = chartY + chartHeight - ((point.price - actualMinPrice) / (actualMaxPrice - actualMinPrice)) * chartHeight;
+                    const actualPriceRange = actualMaxPrice - actualMinPrice;
+                    y = chartY + chartHeight - ((point.price - actualMinPrice) / actualPriceRange) * chartHeight;
                   } else if (point.y !== undefined) {
                     y = point.y;
                   } else {
-                    continue; // Sem coordenadas válidas
+                    continue;
                   }
                   const distance = Math.abs(mouseY - y);
-                  // Área clicável generosa de 15 pixels
-                  if (distance < 15 && mouseX >= chartX && mouseX <= chartX + chartWidth) {
+                  // Área clicável muito generosa de 20 pixels para facilitar toque mobile
+                  if (distance < 20 && mouseX >= chartX && mouseX <= chartX + chartWidth) {
                     // Selecionar a ferramenta
                     if (onToolClick) {
                       onToolClick(tool.id, tool.type, { x: mouseX, y: mouseY });
@@ -5897,14 +5829,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   }
                   // Se a ferramenta já está selecionada, preparar para arraste (será iniciado no mouse move)
                   if (selectedToolIdRef.current === tool.id && onToolMove) {
-                    // DELTA DRAGGING: Calcular offset inicial entre mouse e pontos da ferramenta
-                    const prices = visibleCandles.flatMap(c => [c.open, c.high, c.low, c.close]);
-                    const minPrice = Math.min(...prices);
-                    const maxPrice = Math.max(...prices);
-                    const priceRange = maxPrice - minPrice;
-                    const pricePadding = priceRange * 0.1;
-                    const actualMinPrice = minPrice - pricePadding;
-                    const actualMaxPrice = maxPrice + pricePadding;
+                    const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
                     const mousePrice = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
                     const mouseTime = getTimeFromX(mouseX, chartX, chartWidth, visibleCandles);
                     
@@ -5950,13 +5875,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             );
             
             if (visibleCandles.length > 0) {
-              const prices = visibleCandles.flatMap(c => [c.open, c.high, c.low, c.close]);
-              const minPrice = Math.min(...prices);
-              const maxPrice = Math.max(...prices);
-              const priceRange = maxPrice - minPrice;
-              const pricePadding = priceRange * 0.1;
-              const actualMinPrice = minPrice - pricePadding;
-              const actualMaxPrice = maxPrice + pricePadding;
+              const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
               
               const price = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
               const time = getTimeFromX(mouseX, chartX, chartWidth, visibleCandles);
@@ -5978,15 +5897,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                 };
                 
                 // Garantir que price e time estejam definidos
-                if (secondPoint.price === undefined && visibleCandles.length > 0) {
-                  const prices = visibleCandles.flatMap(c => [c.open, c.high, c.low, c.close]);
-                  const minPrice = Math.min(...prices);
-                  const maxPrice = Math.max(...prices);
-                  const priceRange = maxPrice - minPrice;
-                  const pricePadding = priceRange * 0.1;
-                  const actualMinPrice = minPrice - pricePadding;
-                  const actualMaxPrice = maxPrice + pricePadding;
-                  secondPoint.price = actualMaxPrice - ((mouseY - chartY) / chartHeight) * (actualMaxPrice - actualMinPrice);
+                if (secondPoint.price === undefined) {
+                  const { actualMinPrice: aMin, actualMaxPrice: aMax } = chartLayoutRef.current;
+                  secondPoint.price = aMax - ((mouseY - chartY) / chartHeight) * (aMax - aMin);
                 }
                 
                 if (secondPoint.time === undefined && visibleCandles.length > 0) {
@@ -6072,11 +5985,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         let rawMouseX = e.clientX - rect.left;
         viewportRef.current.mouseY = e.clientY - rect.top;
         
-        const padding = { left: 60, right: 90, top: 20, bottom: 60 };
-        const chartX = padding.left;
-        const chartY = padding.top;
-        const chartWidth = rect.width - padding.left - padding.right;
-        const chartHeight = rect.height - padding.top - padding.bottom;
+        // Usar layout real do gráfico
+        const { chartX, chartY, chartWidth, chartHeight } = chartLayoutRef.current;
         
         // Crosshair livre - seguir o mouse normalmente
         viewportRef.current.mouseX = rawMouseX;
@@ -6101,13 +6011,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           
           if (visibleCandles.length > 0 && viewportRef.current.mouseX >= chartX && viewportRef.current.mouseX <= chartX + chartWidth &&
               viewportRef.current.mouseY >= chartY && viewportRef.current.mouseY <= chartY + chartHeight) {
-            const prices = visibleCandles.flatMap(c => [c.open, c.high, c.low, c.close]);
-            const minPrice = Math.min(...prices);
-            const maxPrice = Math.max(...prices);
-            const priceRange = maxPrice - minPrice;
-            const pricePadding = priceRange * 0.1;
-            const actualMinPrice = minPrice - pricePadding;
-            const actualMaxPrice = maxPrice + pricePadding;
+            const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
             
             const currentPrice = getPriceFromY(viewportRef.current.mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
             const currentTime = getTimeFromX(viewportRef.current.mouseX, chartX, chartWidth, visibleCandles);
@@ -6321,13 +6225,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           
           if (visibleCandles.length > 0 && viewportRef.current.mouseX >= chartX && viewportRef.current.mouseX <= chartX + chartWidth &&
               viewportRef.current.mouseY >= chartY && viewportRef.current.mouseY <= chartY + chartHeight) {
-            const prices = visibleCandles.flatMap(c => [c.open, c.high, c.low, c.close]);
-            const minPrice = Math.min(...prices);
-            const maxPrice = Math.max(...prices);
-            const priceRange = maxPrice - minPrice;
-            const pricePadding = priceRange * 0.1;
-            const actualMinPrice = minPrice - pricePadding;
-            const actualMaxPrice = maxPrice + pricePadding;
+            const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
             
             const price = getPriceFromY(viewportRef.current.mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
             const time = getTimeFromX(viewportRef.current.mouseX, chartX, chartWidth, visibleCandles);
@@ -6557,28 +6455,22 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         if (!isOverCloseButton && !isOverAnySnapshot && !toolDrawingRef.current.isDrawing && !viewport.isDragging && !selectedToolTypeRef.current) {
           const mouseX = viewportRef.current.mouseX;
           const mouseY = viewportRef.current.mouseY;
-          const toolPadding = { left: 60, right: 90, top: 20, bottom: 60 };
-          const toolChartX = toolPadding.left;
-          const toolChartWidth = rect.width - toolPadding.left - toolPadding.right;
-          const toolChartY = toolPadding.top;
-          const toolChartHeight = rect.height - toolPadding.top - toolPadding.bottom;
+          const toolChartX = chartLayoutRef.current.chartX;
+          const toolChartWidth = chartLayoutRef.current.chartWidth;
+          const toolChartY = chartLayoutRef.current.chartY;
+          const toolChartHeight = chartLayoutRef.current.chartHeight;
           
           if (mouseX >= toolChartX && mouseX <= toolChartX + toolChartWidth && mouseY >= toolChartY && mouseY <= toolChartY + toolChartHeight) {
             const visCandles = candlesRef.current.slice(viewportRef.current.visibleStartIndex, viewportRef.current.visibleStartIndex + viewportRef.current.visibleCandleCount);
             if (visCandles.length > 0) {
-              const prices = visCandles.flatMap(c => [c.open, c.high, c.low, c.close]);
-              const minP = Math.min(...prices);
-              const maxP = Math.max(...prices);
-              const rangeP = maxP - minP;
-              const padP = rangeP * 0.1;
-              const aMinP = minP - padP;
-              const aMaxP = maxP + padP;
+              const aMinP = chartLayoutRef.current.actualMinPrice;
+              const aMaxP = chartLayoutRef.current.actualMaxPrice;
               
               for (const tool of graphicToolsRef.current) {
                 if (!tool.visible || !tool.points || tool.points.length === 0) continue;
                 if (tool.type === 'horizontal' && tool.points[0]?.price !== undefined) {
                   const y = toolChartY + toolChartHeight - ((tool.points[0].price - aMinP) / (aMaxP - aMinP)) * toolChartHeight;
-                  if (Math.abs(mouseY - y) < 10) {
+                  if (Math.abs(mouseY - y) < 15) {
                     isOverGraphicTool = true;
                     canvas.style.cursor = 'ns-resize';
                     break;
@@ -6656,6 +6548,97 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         }
       };
 
+      // === Touch Support para Mobile ===
+      let lastTouchDistance = 0;
+      let isTouching = false;
+      let touchMoved = false;
+
+      const getTouchPos = (touch: Touch): { offsetX: number; offsetY: number } => {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          offsetX: touch.clientX - rect.left,
+          offsetY: touch.clientY - rect.top,
+        };
+      };
+
+      const handleTouchStart = (e: TouchEvent) => {
+        e.preventDefault();
+        isTouching = true;
+        touchMoved = false;
+
+        if (e.touches.length === 2) {
+          // Pinch-to-zoom: gravar distância inicial
+          const dx = e.touches[0].clientX - e.touches[1].clientX;
+          const dy = e.touches[0].clientY - e.touches[1].clientY;
+          lastTouchDistance = Math.sqrt(dx * dx + dy * dy);
+          return;
+        }
+
+        if (e.touches.length === 1) {
+          const pos = getTouchPos(e.touches[0]);
+          const syntheticEvent = new MouseEvent('mousedown', {
+            clientX: e.touches[0].clientX,
+            clientY: e.touches[0].clientY,
+            button: 0,
+            bubbles: true,
+          });
+          Object.defineProperty(syntheticEvent, 'offsetX', { value: pos.offsetX });
+          Object.defineProperty(syntheticEvent, 'offsetY', { value: pos.offsetY });
+          Object.defineProperty(syntheticEvent, 'target', { value: canvas });
+          handleMouseDown(syntheticEvent);
+        }
+      };
+
+      const handleTouchMove = (e: TouchEvent) => {
+        e.preventDefault();
+        touchMoved = true;
+
+        if (e.touches.length === 2) {
+          // Pinch-to-zoom
+          const dx = e.touches[0].clientX - e.touches[1].clientX;
+          const dy = e.touches[0].clientY - e.touches[1].clientY;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          if (lastTouchDistance > 0) {
+            const scale = distance / lastTouchDistance;
+            const deltaY = scale < 1 ? 100 : -100; // pinch in = zoom in, pinch out = zoom out
+            if (Math.abs(scale - 1) > 0.02) { // threshold para evitar jitter
+              const syntheticWheel = new WheelEvent('wheel', {
+                deltaY,
+                clientX: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+                clientY: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+                bubbles: true,
+              });
+              handleWheel(syntheticWheel);
+            }
+          }
+          lastTouchDistance = distance;
+          return;
+        }
+
+        if (e.touches.length === 1) {
+          const pos = getTouchPos(e.touches[0]);
+          const syntheticEvent = new MouseEvent('mousemove', {
+            clientX: e.touches[0].clientX,
+            clientY: e.touches[0].clientY,
+            button: 0,
+            bubbles: true,
+          });
+          Object.defineProperty(syntheticEvent, 'offsetX', { value: pos.offsetX });
+          Object.defineProperty(syntheticEvent, 'offsetY', { value: pos.offsetY });
+          handleMouseMove(syntheticEvent);
+        }
+      };
+
+      const handleTouchEnd = (e: TouchEvent) => {
+        e.preventDefault();
+        lastTouchDistance = 0;
+        if (isTouching) {
+          handleMouseUp();
+          isTouching = false;
+        }
+      };
+
       // Adicionar event listeners
       canvas.addEventListener('wheel', handleWheel, { passive: false });
       canvas.addEventListener('mousedown', handleMouseDown);
@@ -6663,6 +6646,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       canvas.addEventListener('mouseup', handleMouseUp);
       canvas.addEventListener('mouseleave', handleMouseLeave);
       canvas.addEventListener('mousemove', updateCursor);
+      // Touch events
+      canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+      canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+      canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+      canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
 
       return () => {
         canvas.removeEventListener('wheel', handleWheel);
@@ -6671,6 +6659,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         canvas.removeEventListener('mouseup', handleMouseUp);
         canvas.removeEventListener('mouseleave', handleMouseLeave);
         canvas.removeEventListener('mousemove', updateCursor);
+        canvas.removeEventListener('touchstart', handleTouchStart);
+        canvas.removeEventListener('touchmove', handleTouchMove);
+        canvas.removeEventListener('touchend', handleTouchEnd);
+        canvas.removeEventListener('touchcancel', handleTouchEnd);
       };
     }, [symbol, timeframe]);
 
