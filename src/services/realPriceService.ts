@@ -6,6 +6,7 @@
  */
 
 import { CandlestickData } from '@/types/chart';
+import { logger } from '@/utils/logger';
 
 export interface RealPriceConfig {
   provider: 'alpha_vantage' | 'yahoo_finance' | 'simulated';
@@ -74,7 +75,7 @@ class RealPriceService {
       this.cache.set(symbol, { data: priceData, timestamp: Date.now() });
       return priceData;
     } catch (error) {
-      console.error(`Error fetching price for ${symbol}:`, error);
+      logger.error(`Error fetching price for ${symbol}:`, error);
       // Fallback para dados simulados
       return await this.fetchSimulated(symbol);
     }
@@ -104,7 +105,7 @@ class RealPriceService {
 
       return candles;
     } catch (error) {
-      console.error(`Error fetching candles for ${symbol}:`, error);
+      logger.error(`Error fetching candles for ${symbol}:`, error);
       // Fallback para dados simulados
       return await this.fetchSimulatedCandles(symbol, timeframe, limit);
     }

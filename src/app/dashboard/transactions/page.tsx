@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 interface Transaction {
   id: string;
@@ -131,7 +132,7 @@ export default function TransactionsPage() {
           setBrokerName(brokerNameValue);
         }
       } catch (error) {
-        console.error('Erro ao carregar dados da broker:', error);
+        logger.error('Erro ao carregar dados da broker:', error);
       }
     };
     
@@ -230,7 +231,7 @@ export default function TransactionsPage() {
 
       setTransactions(filtered);
     } catch (error: any) {
-      console.error('Erro ao carregar transações:', error);
+      logger.error('Erro ao carregar transações:', error);
       toast.error('Erro ao carregar histórico');
     } finally {
       setLoading(false);

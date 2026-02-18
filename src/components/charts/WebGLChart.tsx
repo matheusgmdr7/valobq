@@ -11,6 +11,7 @@ import { rafThrottle, throttle } from '@/utils/performance';
 import { SmoothRenderer } from '@/utils/smoothRenderer';
 import { ChartAxes } from './ChartAxes';
 import clsx from 'clsx';
+import { logger } from '@/utils/logger';
 
 interface WebGLChartProps {
   width?: number;
@@ -309,7 +310,7 @@ export const WebGLChart: React.FC<WebGLChartProps> = ({
         }
         pendingRenderRef.current = false;
       } catch (error) {
-        console.error('[WebGLChart] Error:', error instanceof Error ? error.message : 'Unknown error');
+        logger.error('[WebGLChart]', error instanceof Error ? error.message : 'Unknown error');
       }
     };
 

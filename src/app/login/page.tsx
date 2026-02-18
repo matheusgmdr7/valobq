@@ -5,6 +5,7 @@ import { Flag, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 type Language = 'pt' | 'en' | 'es';
 
@@ -123,7 +124,7 @@ const LoginPage: React.FC = () => {
           setBrokerName(brokerNameValue);
         }
       } catch (error) {
-        console.error('Erro ao carregar dados da broker:', error);
+        logger.error('Erro ao carregar dados da broker:', error);
       }
     };
     

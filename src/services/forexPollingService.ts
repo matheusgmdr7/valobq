@@ -9,6 +9,7 @@
  */
 
 import { CandlestickData } from '@/types/chart';
+import { logger } from '@/utils/logger';
 
 export interface ForexTick {
   symbol: string;
@@ -106,7 +107,7 @@ export class ForexPollingService {
         }
       }
     } catch (error: unknown) {
-      console.error('[ForexPolling] Error:', error instanceof Error ? error.message : 'Unknown error');
+      logger.error('[ForexPolling]', error instanceof Error ? error.message : 'Unknown error');
       
       // Mesmo com erro, tentar usar preço simulado como último recurso
       try {
@@ -118,7 +119,7 @@ export class ForexPollingService {
           this.tickHandler(fallbackTick);
         }
       } catch (fallbackError) {
-        console.error('[ForexPolling] Error:', fallbackError instanceof Error ? fallbackError.message : 'Unknown error');
+        logger.error('[ForexPolling]', fallbackError instanceof Error ? fallbackError.message : 'Unknown error');
       }
     }
   }
@@ -220,17 +221,7 @@ export class ForexPollingService {
         url: `/api/forex/price?symbol=${encodeURIComponent(symbol)}`
       };
 
-      // Log sempre (não ocasionalmente) para debug do bug
-      console.error(`❌ [Forex Polling] ERRO DETALHADO ao buscar preço para ${symbol}:`, errorDetails);
-      
-      // Log específico para tipos comuns de erro
-      if (errorDetails.isCORS) {
-        console.error('🚫 [Forex Polling] ERRO CORS detectado! Verifique Service Worker e configuração de proxy.');
-      } else if (errorDetails.isTimeout) {
-        console.error('⏱️ [Forex Polling] TIMEOUT - API route não respondeu em 10 segundos.');
-      } else if (errorDetails.isNetworkError) {
-        console.error('🌐 [Forex Polling] ERRO DE REDE - Verifique se o servidor Next.js está rodando.');
-      }
+      logger.error(`[ForexPolling] Erro ao buscar preço para ${symbol}:`, errorDetails);
       
       // Fallback para preço simulado (Random Walk)
       return this.getSimulatedPrice(symbol);

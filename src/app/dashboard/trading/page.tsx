@@ -666,7 +666,7 @@ const TradingPage: React.FC = () => {
     
     // Se não temos preço válido, não podemos resolver a trade
     if (!finalPrice || finalPrice <= 0 || !isFinite(finalPrice)) {
-      console.warn(`[Trade] Sem preço válido para ${trade.symbol}, adiando resolução (finalPrice=${finalPrice})`);
+      // Sem preço válido, adiar resolução
       processedTradeIdsRef.current.delete(trade.id);
       return;
     }
@@ -679,7 +679,7 @@ const TradingPage: React.FC = () => {
     
     const payoutPercent = 0.88;
     
-    console.log(`[Trade Result] ${trade.id.slice(0, 8)} | ${trade.symbol} | ${trade.type.toUpperCase()} | Entry: ${trade.entryPrice} | Exit: ${finalPrice} | Diff: ${priceDiff.toFixed(6)} | ${isDraw ? 'DRAW' : (isWin ? 'WIN' : 'LOSS')} | Fonte: ${isCurrentSymbol ? 'chart' : 'cache'}`);
+    
     
     // 3. Atualizar trade local com resultado
     const updatedTrade: Trade = {
@@ -782,7 +782,7 @@ const TradingPage: React.FC = () => {
           newBalance = currentBalance;
         }
         
-        console.log(`[Trade Balance] ${trade.id.slice(0, 8)} | Backend: ${backendResult} | Profit: ${backendProfit} | Balance: ${currentBalance} → ${newBalance}`);
+        
         
         if (newBalance !== currentBalance) {
           animateBalance(currentBalance, newBalance);
@@ -790,7 +790,7 @@ const TradingPage: React.FC = () => {
         
         // Se o backend discordou do frontend, corrigir o estado local
         if (backendResult && backendResult !== updatedTrade.result) {
-          console.warn(`[Trade] DIVERGÊNCIA! Frontend: ${updatedTrade.result} | Backend: ${backendResult} | Usando backend.`);
+          
           const correctedTrade: Trade = {
             ...updatedTrade,
             result: backendResult,
@@ -801,7 +801,7 @@ const TradingPage: React.FC = () => {
         }
       }
     } catch (error) {
-      console.error('[Trade] Erro ao sincronizar com backend:', error instanceof Error ? error.message : 'Unknown');
+      
       // Fallback: usar resultado do frontend para atualizar saldo
       if (user) {
         const currentBalance = activeBalanceRef.current;
@@ -912,7 +912,7 @@ const TradingPage: React.FC = () => {
         if (error?.code === '42P01' || error?.message?.includes('does not exist')) {
           return;
         }
-        console.error('Error:', error instanceof Error ? error.message : 'Unknown');
+        
       }
     };
 
@@ -1006,7 +1006,7 @@ const TradingPage: React.FC = () => {
           setBrokerName(brokerNameValue);
         }
       } catch (error) {
-        console.error('Error:', error instanceof Error ? error.message : 'Unknown');
+        
       }
     };
     
@@ -1036,13 +1036,13 @@ const TradingPage: React.FC = () => {
             setPaymentGateways([]);
             return;
           }
-          console.error('Error:', error instanceof Error ? error.message : 'Unknown');
+          
           setPaymentGateways([]);
           return;
         }
         setPaymentGateways(data || []);
       } catch (error: any) {
-        console.error('Error:', error instanceof Error ? error.message : 'Unknown');
+        
         setPaymentGateways([]);
       } finally {
         setLoadingGateways(false);
@@ -1331,7 +1331,6 @@ const TradingPage: React.FC = () => {
       toast.success('Gráfico exportado com sucesso!');
       setShowExportMenu(false);
     } catch (error) {
-      console.error('Error:', error instanceof Error ? error.message : 'Unknown');
       toast.error('Erro ao exportar gráfico');
     }
   };
@@ -1377,7 +1376,6 @@ const TradingPage: React.FC = () => {
       toast.success(`Dados exportados como ${format.toUpperCase()}!`);
       setShowExportMenu(false);
     } catch (error) {
-      console.error('Error:', error instanceof Error ? error.message : 'Unknown');
       toast.error('Erro ao exportar dados');
     }
   };
@@ -1397,7 +1395,6 @@ const TradingPage: React.FC = () => {
       }
       setShowExportMenu(false);
     } catch (error) {
-      console.error('Error:', error instanceof Error ? error.message : 'Unknown');
       toast.error('Erro ao copiar gráfico');
     }
   };
@@ -1412,7 +1409,6 @@ const TradingPage: React.FC = () => {
       chartRef.current.print();
       setShowExportMenu(false);
     } catch (error) {
-      console.error('Error:', error instanceof Error ? error.message : 'Unknown');
       toast.error('Erro ao imprimir gráfico');
     }
   };
@@ -4675,7 +4671,7 @@ const TradingPage: React.FC = () => {
                       toast.error(result.message || 'Erro ao executar trade');
                     }
                   } catch (error) {
-                    console.error('Error:', error instanceof Error ? error.message : 'Unknown');
+                    
                     toast.error('Erro ao executar trade');
                   }
                 }}
@@ -4735,7 +4731,7 @@ const TradingPage: React.FC = () => {
                       toast.error(result.message || 'Erro ao executar trade');
                     }
                   } catch (error) {
-                    console.error('Error:', error instanceof Error ? error.message : 'Unknown');
+                    
                     toast.error('Erro ao executar trade');
                   }
                 }}
@@ -4821,7 +4817,7 @@ const TradingPage: React.FC = () => {
                     localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
                     if (user) { animateBalance(activeBalance, activeBalance - tradeValue); }
                   } else { toast.error(result.message || 'Erro ao executar trade'); }
-                } catch (error) { console.error('Error:', error instanceof Error ? error.message : 'Unknown'); toast.error('Erro ao executar trade'); }
+                } catch (error) { toast.error('Erro ao executar trade'); }
               }}
               className="flex-1 bg-green-600 active:bg-green-700 text-white py-3 rounded-md flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"
             >
@@ -4846,7 +4842,7 @@ const TradingPage: React.FC = () => {
                     localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
                     if (user) { animateBalance(activeBalance, activeBalance - tradeValue); }
                   } else { toast.error(result.message || 'Erro ao executar trade'); }
-                } catch (error) { console.error('Error:', error instanceof Error ? error.message : 'Unknown'); toast.error('Erro ao executar trade'); }
+                } catch (error) { toast.error('Erro ao executar trade'); }
               }}
               className="flex-1 bg-red-600 active:bg-red-700 text-white py-3 rounded-md flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"
             >
@@ -5591,7 +5587,6 @@ const TradingPage: React.FC = () => {
                               .single();
 
                             if (depositError) {
-                              console.error('Error:', depositError instanceof Error ? depositError.message : 'Unknown');
                               toast.dismiss('deposit-processing');
                               toast.custom((t) => (
                                 <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
@@ -5699,7 +5694,7 @@ const TradingPage: React.FC = () => {
                           setAcceptedTerms(false);
                         }
                       } catch (error: any) {
-                        console.error('Error:', error instanceof Error ? error.message : 'Unknown');
+                        
                         toast.dismiss('deposit-processing');
                         toast.custom((t) => (
                           <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}

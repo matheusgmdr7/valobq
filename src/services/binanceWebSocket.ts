@@ -5,6 +5,8 @@
  * Não requer autenticação para dados de ticker
  */
 
+import { logger } from '@/utils/logger';
+
 export interface BinanceConfig {
   symbol?: string;
   streamType?: 'ticker' | 'trade' | 'kline';
@@ -104,12 +106,12 @@ export class BinanceWebSocket {
             const data = JSON.parse(event.data);
             this.handleMessage(data);
           } catch (error) {
-            console.error('[BinanceWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+            logger.error('[BinanceWS]', error instanceof Error ? error.message : 'Unknown error');
           }
         };
 
         this.ws.onerror = () => {
-          console.error('[BinanceWebSocket] Error: WebSocket error');
+          logger.error('[BinanceWS] WebSocket error');
           // Não rejeitar imediatamente, aguardar onclose
         };
 
@@ -162,7 +164,7 @@ export class BinanceWebSocket {
             try {
               handler(tick);
             } catch (error) {
-              console.error('[BinanceWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+              logger.error('[BinanceWS]', error instanceof Error ? error.message : 'Unknown error');
             }
           });
         }
@@ -180,7 +182,7 @@ export class BinanceWebSocket {
             try {
               handler(tick);
             } catch (error) {
-              console.error('[BinanceWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+              logger.error('[BinanceWS]', error instanceof Error ? error.message : 'Unknown error');
             }
           });
         }
@@ -199,13 +201,13 @@ export class BinanceWebSocket {
             try {
               handler(tick);
             } catch (error) {
-              console.error('[BinanceWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+              logger.error('[BinanceWS]', error instanceof Error ? error.message : 'Unknown error');
             }
           });
         }
       }
     } catch (error) {
-      console.error('[BinanceWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+      logger.error('[BinanceWS]', error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
@@ -227,7 +229,7 @@ export class BinanceWebSocket {
     if (this.isConnected) {
       this.disconnect();
       this.connect().catch(error => {
-        console.error('[BinanceWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+        logger.error('[BinanceWS]', error instanceof Error ? error.message : 'Unknown error');
       });
     }
   }
@@ -261,7 +263,7 @@ export class BinanceWebSocket {
    */
   private scheduleReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('[BinanceWebSocket] Error: Max reconnect attempts reached');
+      logger.error('[BinanceWS] Max reconnect attempts reached');
       return;
     }
 
@@ -270,7 +272,7 @@ export class BinanceWebSocket {
 
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch(error => {
-        console.error('[BinanceWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+        logger.error('[BinanceWS]', error instanceof Error ? error.message : 'Unknown error');
       });
     }, delay);
   }

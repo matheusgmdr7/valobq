@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { getAvailablePromotions, getPromotionHistory, Promotion } from '@/services/promotionsService';
+import { logger } from '@/utils/logger';
 
 interface PromotionsProps {
   onClose: () => void;
@@ -29,7 +30,7 @@ export const Promotions: React.FC<PromotionsProps> = ({ onClose }) => {
         setHistory(data);
       }
     } catch (error) {
-      console.error('Erro ao carregar promoções:', error);
+      logger.error('Erro ao carregar promoções:', error);
     } finally {
       setLoading(false);
     }

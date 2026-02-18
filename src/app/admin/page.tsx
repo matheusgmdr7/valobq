@@ -49,9 +49,13 @@ export default function AdminPage() {
   });
   const [newUsersChart, setNewUsersChart] = useState<{ date: string; count: number }[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
+  const [liveTradesCount, setLiveTradesCount] = useState(0);
 
   useEffect(() => {
     loadTradingStatus();
+    loadLiveTrades();
+    const interval = setInterval(loadLiveTrades, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -97,6 +101,37 @@ export default function AdminPage() {
     }
   };
 
+  const loadLiveTrades = async () => {
+    try {
+      if (!supabase) return;
+      const now = new Date();
+      const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+
+      const { data } = await supabase
+        .from('trades')
+        .select('expiration, created_at')
+        .is('exit_price', null)
+        .is('result', null)
+        .gte('created_at', fiveMinAgo);
+
+      if (!data) { setLiveTradesCount(0); return; }
+
+      const nowMs = now.getTime();
+      const active = data.filter(t => {
+        const exp = t.expiration;
+        let expMs: number;
+        if (exp > 1_000_000_000_000) expMs = exp;
+        else if (exp > 1_000_000_000) expMs = exp * 1000;
+        else expMs = new Date(t.created_at).getTime() + exp * 1000;
+        return expMs > nowMs;
+      });
+
+      setLiveTradesCount(active.length);
+    } catch {
+      // silently fail
+    }
+  };
+
   const loadStats = useCallback(async () => {
     setLoading(true);
     try {
@@ -112,11 +147,6 @@ export default function AdminPage() {
       let newUsersQuery = supabase.from('users').select('*', { count: 'exact', head: true });
       if (dateFrom) newUsersQuery = newUsersQuery.gte('created_at', dateFrom);
       const { count: newUsers } = await newUsersQuery;
-
-      // Trades ativos
-      const { count: activeTrades } = await supabase
-        .from('trades').select('*', { count: 'exact', head: true })
-        .is('exit_price', null).is('result', null);
 
       // Depósitos concluídos (da tabela deposits)
       let depsQuery = supabase.from('deposits').select('amount').eq('status', 'approved');
@@ -143,7 +173,7 @@ export default function AdminPage() {
       setStats({
         totalUsers: totalUsers || 0,
         newUsers: newUsers || 0,
-        activeTrades: activeTrades || 0,
+        activeTrades: 0,
         totalDeposits,
         totalWithdrawals,
         depositCount,
@@ -336,14 +366,18 @@ export default function AdminPage() {
             <p className="text-[11px] text-white/40 mt-1">Total de Usuários</p>
           </div>
 
-          {/* Trades Ativos */}
-          <div className="group bg-gradient-to-b from-white/[0.04] to-transparent border border-white/[0.06] rounded-xl p-5 hover:border-white/10 transition-all">
+          {/* Trades Ativos (Tempo Real) */}
+          <div className="group bg-gradient-to-b from-purple-500/[0.04] to-transparent border border-purple-500/[0.08] rounded-xl p-5 hover:border-purple-500/20 transition-all">
             <div className="flex items-center justify-between mb-4">
               <div className="w-9 h-9 rounded-lg bg-purple-500/10 flex items-center justify-center">
                 <Activity className="w-4 h-4 text-purple-400" />
               </div>
+              <span className="flex items-center gap-1 text-[10px] font-medium text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                Live
+              </span>
             </div>
-            <h3 className="text-2xl font-bold text-white tracking-tight">{loading ? '—' : stats.activeTrades}</h3>
+            <h3 className="text-2xl font-bold text-white tracking-tight">{liveTradesCount}</h3>
             <p className="text-[11px] text-white/40 mt-1">Trades em Andamento</p>
           </div>
 

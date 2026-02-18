@@ -12,6 +12,7 @@ import { ForexPollingService, ForexTick } from '@/services/forexPollingService';
 import { PriceAnimator } from '@/utils/priceAnimator';
 import { UpdateBatcher } from '@/utils/updateBatcher';
 import { CandlestickData } from '@/types/chart';
+import { logger } from '@/utils/logger';
 
 export interface UseRealtimeMarketDataOptions {
   symbol: string;
@@ -253,7 +254,7 @@ export function useRealtimeMarketData(
         dataSourceRef.current = 'binance';
         return;
       } catch (error) {
-        console.error('[Realtime] Error:', error instanceof Error ? error.message : 'Unknown error');
+        logger.error('[Realtime]', error instanceof Error ? error.message : 'Unknown error');
         setIsConnected(false);
         setDataSource('none');
         dataSourceRef.current = 'none';
@@ -281,7 +282,7 @@ export function useRealtimeMarketData(
         setDataSource('forex_polling');
         dataSourceRef.current = 'forex_polling';
       } catch (error) {
-        console.error('[Realtime] Error:', error instanceof Error ? error.message : 'Unknown error');
+        logger.error('[Realtime]', error instanceof Error ? error.message : 'Unknown error');
         setIsConnected(false);
         setDataSource('none');
         dataSourceRef.current = 'none';

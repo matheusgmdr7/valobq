@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { User, LoginCredentials, RegisterCredentials, AccountType } from '@/types';
 import { toast } from 'react-hot-toast';
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 interface AuthContextType {
   user: User | null;
@@ -223,7 +224,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       window.location.href = '/dashboard/trading';
       return true;
     } catch (error) {
-      console.error('Erro no login:', error instanceof Error ? error.message : 'Unknown');
+      logger.error('Erro no login:', error instanceof Error ? error.message : 'Unknown');
       showErrorToast('Erro ao fazer login');
       return false;
     } finally {
@@ -284,7 +285,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         .single();
 
       if (createError || !newUser) {
-        console.error('Erro ao criar registro do usuário:', createError?.message);
+        logger.error('Erro ao criar registro do usuário:', createError?.message);
         showErrorToast('Erro ao criar conta');
         return false;
       }
@@ -297,7 +298,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       showSuccessToast('Conta criada com sucesso');
       return true;
     } catch (error) {
-      console.error('Erro ao criar conta:', error instanceof Error ? error.message : 'Unknown');
+      logger.error('Erro ao criar conta:', error instanceof Error ? error.message : 'Unknown');
       showErrorToast('Erro ao criar conta');
       return false;
     } finally {
@@ -339,7 +340,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         .update({ [dbField]: newBalance, updated_at: new Date().toISOString() })
         .eq('id', user.id)
         .then(({ error }) => {
-          if (error) console.error('Erro ao persistir saldo:', error.message);
+          if (error) logger.error('Erro ao persistir saldo:', error.message);
         });
     }
   };

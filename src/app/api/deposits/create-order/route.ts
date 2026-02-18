@@ -156,7 +156,7 @@ export async function POST(request: NextRequest) {
         orderPayload.split = split;
       }
 
-      console.log('[CreateOrder] Payload:', JSON.stringify(orderPayload));
+      
 
       return fetch(`${apiBaseUrl}/transaction/neworder`, {
         method: 'POST',

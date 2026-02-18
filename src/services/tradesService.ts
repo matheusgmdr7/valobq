@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { BinaryOption } from '@/types';
+import { logger } from '@/utils/logger';
 
 /**
  * Serviço para gerenciar operações de trading
@@ -49,7 +50,7 @@ export async function getOpenPositions(userId: string): Promise<OpenPosition[]> 
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Erro ao buscar posições abertas:', error);
+      logger.error('Erro ao buscar posições abertas:', error);
       return [];
     }
 
@@ -64,7 +65,7 @@ export async function getOpenPositions(userId: string): Promise<OpenPosition[]> 
       createdAt: trade.created_at,
     }));
   } catch (error) {
-    console.error('Erro ao buscar posições abertas:', error);
+    logger.error('Erro ao buscar posições abertas:', error);
     return [];
   }
 }
@@ -91,7 +92,7 @@ export async function getTradeHistory(
       .limit(limit);
 
     if (error) {
-      console.error('Erro ao buscar histórico:', error);
+      logger.error('Erro ao buscar histórico:', error);
       return [];
     }
 
@@ -110,7 +111,7 @@ export async function getTradeHistory(
       updatedAt: trade.updated_at,
     }));
   } catch (error) {
-    console.error('Erro ao buscar histórico:', error);
+    logger.error('Erro ao buscar histórico:', error);
     return [];
   }
 }

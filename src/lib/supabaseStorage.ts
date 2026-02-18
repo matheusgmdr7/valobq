@@ -3,6 +3,7 @@
  */
 
 import { supabase } from './supabase';
+import { logger } from '@/utils/logger';
 
 const BUCKET_NAME = 'broker-assets';
 
@@ -18,7 +19,7 @@ export async function uploadImageToStorage(
 ): Promise<string | null> {
   try {
     if (!supabase) {
-      console.error('Supabase não configurado');
+      logger.error('Supabase não configurado');
       return null;
     }
 
@@ -61,7 +62,7 @@ export async function uploadImageToStorage(
       });
 
     if (error) {
-      console.error('Erro ao fazer upload:', error);
+      logger.error('Erro ao fazer upload:', error);
       return null;
     }
 
@@ -72,7 +73,7 @@ export async function uploadImageToStorage(
 
     return urlData.publicUrl;
   } catch (error) {
-    console.error('Erro ao fazer upload da imagem:', error);
+    logger.error('Erro ao fazer upload da imagem:', error);
     return null;
   }
 }
@@ -92,13 +93,13 @@ export async function removeImageFromStorage(fileName: string): Promise<boolean>
       .remove([fileName]);
 
     if (error) {
-      console.error('Erro ao remover imagem:', error);
+      logger.error('Erro ao remover imagem:', error);
       return false;
     }
 
     return true;
   } catch (error) {
-    console.error('Erro ao remover imagem:', error);
+    logger.error('Erro ao remover imagem:', error);
     return false;
   }
 }
@@ -141,7 +142,7 @@ export async function loadBrokerImage(
     // Fallback: carregar do localStorage
     return localStorage.getItem(storageKey);
   } catch (error) {
-    console.error('Erro ao carregar imagem:', error);
+    logger.error('Erro ao carregar imagem:', error);
     // Fallback: carregar do localStorage
     return localStorage.getItem(storageKey);
   }

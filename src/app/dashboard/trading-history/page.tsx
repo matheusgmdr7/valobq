@@ -23,6 +23,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 type Language = 'pt' | 'en' | 'es';
 
@@ -194,7 +195,7 @@ export default function TradingHistoryPage() {
         if (logoUrl) setBrokerLogo(logoUrl);
         if (brokerNameValue) setBrokerName(brokerNameValue);
       } catch (error) {
-        console.error('Erro ao carregar dados da broker:', error);
+        logger.error('Erro ao carregar dados da broker:', error);
       }
     };
     
@@ -246,7 +247,7 @@ export default function TradingHistoryPage() {
       const { data, error } = await query.limit(200);
 
       if (error) {
-        console.error('Erro ao buscar histórico:', error);
+        logger.error('Erro ao buscar histórico:', error);
         setTrades([]);
       } else {
         const mapped: TradeRecord[] = (data || []).map(trade => ({
@@ -266,7 +267,7 @@ export default function TradingHistoryPage() {
         setTrades(mapped);
       }
     } catch (error) {
-      console.error('Erro ao carregar histórico de trading:', error);
+      logger.error('Erro ao carregar histórico de trading:', error);
       setTrades([]);
     } finally {
       setLoading(false);

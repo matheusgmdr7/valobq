@@ -5,6 +5,8 @@
  * Formato: Socket.IO sobre WebSocket
  */
 
+import { logger } from '@/utils/logger';
+
 export interface TradingViewConfig {
   url?: string;
   symbol?: string;
@@ -77,7 +79,7 @@ export class TradingViewWebSocket {
         };
 
         this.ws.onerror = (error) => {
-          console.error('[TradingViewWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+          logger.error('[TradingViewWS]', error instanceof Error ? error.message : 'Unknown error');
           reject(error);
         };
 
@@ -173,7 +175,7 @@ export class TradingViewWebSocket {
         this.processTradingViewMessage(message);
       }
     } catch (error) {
-      console.error('[TradingViewWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+      logger.error('[TradingViewWS]', error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
@@ -232,7 +234,7 @@ export class TradingViewWebSocket {
         try {
           handler(tick);
         } catch (error) {
-          console.error('[TradingViewWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+          logger.error('[TradingViewWS]', error instanceof Error ? error.message : 'Unknown error');
         }
       });
     }
@@ -247,7 +249,7 @@ export class TradingViewWebSocket {
       try {
         handler(params);
       } catch (error) {
-        console.error('[TradingViewWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+        logger.error('[TradingViewWS]', error instanceof Error ? error.message : 'Unknown error');
       }
     });
   }
@@ -315,7 +317,7 @@ export class TradingViewWebSocket {
    */
   private scheduleReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('[TradingViewWebSocket] Error: Max reconnect attempts reached');
+      logger.error('[TradingViewWS] Max reconnect attempts reached');
       return;
     }
 
@@ -324,7 +326,7 @@ export class TradingViewWebSocket {
 
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch(error => {
-        console.error('[TradingViewWebSocket] Error:', error instanceof Error ? error.message : 'Unknown error');
+        logger.error('[TradingViewWS]', error instanceof Error ? error.message : 'Unknown error');
       });
     }, delay);
   }

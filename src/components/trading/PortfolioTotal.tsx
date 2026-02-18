@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getOpenPositions, OpenPosition } from '@/services/tradesService';
 import { TrendingUp, TrendingDown } from 'lucide-react';
+import { logger } from '@/utils/logger';
 
 interface PortfolioTotalProps {
   onClose: () => void;
@@ -29,7 +30,7 @@ export const PortfolioTotal: React.FC<PortfolioTotalProps> = ({ onClose }) => {
       const data = await getOpenPositions(user.id);
       setPositions(data);
     } catch (error) {
-      console.error('Erro ao carregar posições:', error);
+      logger.error('Erro ao carregar posições:', error);
     } finally {
       setLoading(false);
     }

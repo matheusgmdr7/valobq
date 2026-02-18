@@ -5,6 +5,7 @@
  */
 
 import { CandlestickData } from '@/types/chart';
+import { logger } from '@/utils/logger';
 
 export interface CurrencyPair {
   symbol: string;
@@ -1135,7 +1136,7 @@ class MarketService {
         try {
           callback(data);
         } catch (error) {
-          console.error('Error in price subscriber:', error);
+          logger.error('Error in price subscriber:', error);
         }
       });
     }

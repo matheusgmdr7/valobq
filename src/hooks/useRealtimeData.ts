@@ -7,6 +7,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { CandlestickData } from '@/types/chart';
 import { RealtimeDataManager, RealtimeDataConfig } from '@/engine/websocket/RealtimeDataManager';
+import { logger } from '@/utils/logger';
 
 export interface UseRealtimeDataOptions extends Omit<RealtimeDataConfig, 'symbol'> {
   symbol: string;
@@ -77,7 +78,7 @@ export function useRealtimeData(
     // Iniciar automaticamente se configurado
     if (autoStart) {
       manager.start().catch((error) => {
-        console.error('Failed to start realtime data manager:', error);
+        logger.error('Failed to start realtime data manager:', error);
       });
     }
 

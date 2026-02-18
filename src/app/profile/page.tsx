@@ -9,6 +9,7 @@ import {
 import { createChat, sendMessage, getChatMessages, getUserChats, Chat, ChatMessage } from '@/services/chatService';
 import { toast } from 'react-hot-toast';
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 type Language = 'pt' | 'en' | 'es';
 
@@ -255,7 +256,7 @@ const ProfilePage: React.FC = () => {
           setBrokerName(brokerNameValue);
         }
       } catch (error) {
-        console.error('Erro ao carregar dados da broker:', error);
+        logger.error('Erro ao carregar dados da broker:', error);
       }
     };
     
@@ -308,7 +309,7 @@ const ProfilePage: React.FC = () => {
         setCurrentChat(data[0]);
       }
     } catch (error) {
-      console.error('Erro ao carregar chats:', error);
+      logger.error('Erro ao carregar chats:', error);
     }
   };
 
@@ -318,7 +319,7 @@ const ProfilePage: React.FC = () => {
       const data = await getChatMessages(currentChat.id);
       setMessages(data);
     } catch (error) {
-      console.error('Erro ao carregar mensagens:', error);
+      logger.error('Erro ao carregar mensagens:', error);
     }
   };
 
@@ -333,7 +334,7 @@ const ProfilePage: React.FC = () => {
         setMessages([]);
       }
     } catch (error) {
-      console.error('Erro ao criar chat:', error);
+      logger.error('Erro ao criar chat:', error);
     } finally {
       setChatLoading(false);
     }
@@ -348,7 +349,7 @@ const ProfilePage: React.FC = () => {
         setMessageText('');
       }
     } catch (error) {
-      console.error('Erro ao enviar mensagem:', error);
+      logger.error('Erro ao enviar mensagem:', error);
     }
   };
 
@@ -416,7 +417,7 @@ const ProfilePage: React.FC = () => {
         }
       }
     } catch (error) {
-      console.error('Erro ao carregar status de verificação:', error);
+      logger.error('Erro ao carregar status de verificação:', error);
     }
   };
   
@@ -534,7 +535,7 @@ const ProfilePage: React.FC = () => {
         toast.error('Por favor, anexe o documento e a selfie');
       }
     } catch (error: any) {
-      console.error('Erro ao enviar verificação:', error);
+      logger.error('Erro ao enviar verificação:', error);
       toast.error(error.message || 'Erro ao enviar documentos');
     } finally {
       setSubmitting(false);
@@ -2134,7 +2135,7 @@ const ProfilePage: React.FC = () => {
                           });
 
                         if (error) {
-                          console.error('Erro ao salvar solicitação:', error);
+                          logger.error('Erro ao salvar solicitação:', error);
                           toast.error('Erro ao enviar solicitação. Tente novamente.');
                         } else {
                           toast.success('Solicitação enviada com sucesso! Nossa equipe entrará em contato em até 7 dias úteis.');
@@ -2143,7 +2144,7 @@ const ProfilePage: React.FC = () => {
                           setClosureReason('');
                         }
                       } catch (error) {
-                        console.error('Erro ao processar solicitação:', error);
+                        logger.error('Erro ao processar solicitação:', error);
                         toast.error('Erro ao processar solicitação. Tente novamente.');
                       } finally {
                         setSubmittingClosure(false);

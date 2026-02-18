@@ -3,6 +3,7 @@ import { WebGLContext } from '../../engine/webgl/WebGLContext';
 import { Renderer } from '../../engine/webgl/Renderer';
 import { CandlestickData } from '../../types/chart';
 import { ViewState, VisibleRange } from '../../engine/charts/ChartManager';
+import { logger } from '../../utils/logger';
 
 interface CanvasProps {
   width?: number;
@@ -180,7 +181,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         };
       }
     } catch (error) {
-      console.error('Failed to initialize WebGL Canvas:', error);
+      logger.error('Failed to initialize WebGL Canvas:', error);
       setError(error instanceof Error ? error.message : 'Unknown error');
     }
   }, []);

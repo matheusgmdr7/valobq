@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getTradeHistory, Trade } from '@/services/tradesService';
 import { TrendingUp, TrendingDown, BarChart3, ChevronDown } from 'lucide-react';
+import { logger } from '@/utils/logger';
 
 // Categorias de ativos (mesmas do dropdown de seleção de ativos)
 const assetCategories = [
@@ -95,7 +96,7 @@ export const TradeHistory: React.FC<TradeHistoryProps> = ({ onClose, trades: ext
       const data = await getTradeHistory(user.id, 50);
       setTrades(data);
     } catch (error) {
-      console.error('Erro ao carregar histórico:', error);
+      logger.error('Erro ao carregar histórico:', error);
     } finally {
       setLoading(false);
     }

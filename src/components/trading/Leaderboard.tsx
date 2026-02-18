@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getLeaderboard, getUserRank, LeaderboardEntry } from '@/services/leaderboardService';
 import { Trophy, HelpCircle } from 'lucide-react';
+import { logger } from '@/utils/logger';
 
 // Componente de Medalha de Ouro
 const GoldMedal: React.FC<{ size?: number; id?: string }> = ({ size = 24, id = 'gold' }) => (
@@ -109,7 +110,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ onClose }) => {
       const data = await getLeaderboard(country, period);
       setLeaders(data);
     } catch (error) {
-      console.error('Erro ao carregar leaderboard:', error);
+      logger.error('Erro ao carregar leaderboard:', error);
     } finally {
       setLoading(false);
     }
@@ -122,7 +123,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ onClose }) => {
       const rank = await getUserRank(user.id);
       setUserRank(rank);
     } catch (error) {
-      console.error('Erro ao carregar rank do usuário:', error);
+      logger.error('Erro ao carregar rank do usuário:', error);
     }
   };
 

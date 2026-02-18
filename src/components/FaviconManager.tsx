@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 export function FaviconManager() {
   useEffect(() => {
@@ -43,7 +44,7 @@ export function FaviconManager() {
           updateFavicon(faviconUrl);
         }
       } catch (error) {
-        console.error('Erro ao carregar favicon:', error);
+        logger.error('Erro ao carregar favicon:', error);
       }
     };
     

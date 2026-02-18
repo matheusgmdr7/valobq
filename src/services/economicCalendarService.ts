@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 /**
  * Serviço para gerenciar calendário econômico
@@ -98,7 +99,7 @@ export async function getEconomicCalendar(
       return events;
     }
   } catch (error) {
-    console.error('Erro ao buscar da API, usando dados mockados:', error);
+    logger.error('Erro ao buscar da API, usando dados mockados:', error);
   }
 
   // Fallback para dados mockados

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createChat, sendMessage, getChatMessages, getUserChats, Chat, ChatMessage } from '@/services/chatService';
 import { Send, MessageSquare } from 'lucide-react';
+import { logger } from '@/utils/logger';
 
 interface ChatSupportProps {
   onClose: () => void;
@@ -59,7 +60,7 @@ export const ChatSupport: React.FC<ChatSupportProps> = ({ onClose }) => {
         setCurrentChat(data[0]);
       }
     } catch (error) {
-      console.error('Erro ao carregar chats:', error);
+      logger.error('Erro ao carregar chats:', error);
     }
   };
 
@@ -70,7 +71,7 @@ export const ChatSupport: React.FC<ChatSupportProps> = ({ onClose }) => {
       const data = await getChatMessages(currentChat.id);
       setMessages(data);
     } catch (error) {
-      console.error('Erro ao carregar mensagens:', error);
+      logger.error('Erro ao carregar mensagens:', error);
     }
   };
 
@@ -86,7 +87,7 @@ export const ChatSupport: React.FC<ChatSupportProps> = ({ onClose }) => {
         setMessages([]);
       }
     } catch (error) {
-      console.error('Erro ao criar chat:', error);
+      logger.error('Erro ao criar chat:', error);
     } finally {
       setLoading(false);
     }
@@ -102,7 +103,7 @@ export const ChatSupport: React.FC<ChatSupportProps> = ({ onClose }) => {
         setMessageText('');
       }
     } catch (error) {
-      console.error('Erro ao enviar mensagem:', error);
+      logger.error('Erro ao enviar mensagem:', error);
     }
   };
 

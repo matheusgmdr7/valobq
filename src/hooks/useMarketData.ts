@@ -7,6 +7,7 @@ import { CandlestickData } from '@/types/chart';
 import { CurrencyPair, marketService, MarketDataResponse } from '@/services/marketService';
 import { realPriceService } from '@/services/realPriceService';
 import { useRealtimeData } from './useRealtimeData';
+import { logger } from '@/utils/logger';
 
 export interface UseMarketDataOptions {
   symbol: string;
@@ -74,7 +75,7 @@ export function useMarketData(options: UseMarketDataOptions): UseMarketDataRetur
       }
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to fetch candles'));
-      console.error('Error fetching candles:', err);
+      logger.error('Error fetching candles:', err);
     } finally {
       setLoading(false);
     }

@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Check, Move, ZoomIn, ZoomOut, Maximize2, Minimize2 } from 'lucide-react';
+import { logger } from '@/utils/logger';
 
 interface ImageCropperProps {
   imageSrc: string;
@@ -74,7 +75,7 @@ export function ImageCropper({ imageSrc, onCrop, onCancel, aspectRatio }: ImageC
       }, 100);
     };
     img.onerror = () => {
-      console.error('Erro ao carregar imagem');
+      logger.error('Erro ao carregar imagem');
     };
     img.src = imageSrc;
   }, [imageSrc, aspectRatio]);

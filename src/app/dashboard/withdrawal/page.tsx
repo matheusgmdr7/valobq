@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 type WithdrawalMethod = 'pix-email' | 'pix-phone' | 'pix-random' | 'picpay';
 
@@ -202,7 +203,7 @@ const WithdrawalPage: React.FC = () => {
           setBrokerName(brokerNameValue);
         }
       } catch (error) {
-        console.error('Erro ao carregar dados da broker:', error);
+        logger.error('Erro ao carregar dados da broker:', error);
       }
     };
     
@@ -231,7 +232,7 @@ const WithdrawalPage: React.FC = () => {
           setPicpayIconUrl(picpayData.publicUrl);
         }
       } catch (error) {
-        console.error('Erro ao carregar ícones dos bancos:', error);
+        logger.error('Erro ao carregar ícones dos bancos:', error);
       }
     };
 
@@ -313,7 +314,7 @@ const WithdrawalPage: React.FC = () => {
         .single();
 
       if (error) {
-        console.error('Erro ao salvar solicitação:', error);
+        logger.error('Erro ao salvar solicitação:', error);
         toast.error('Erro ao salvar solicitação: ' + error.message);
         return;
       }
@@ -335,7 +336,7 @@ const WithdrawalPage: React.FC = () => {
       // Recarregar solicitações
       loadWithdrawalRequests();
     } catch (error: any) {
-      console.error('Erro ao salvar solicitação:', error);
+      logger.error('Erro ao salvar solicitação:', error);
       toast.error('Erro ao salvar solicitação');
     }
   };
@@ -354,7 +355,7 @@ const WithdrawalPage: React.FC = () => {
       if (error) throw error;
       setWithdrawalRequests(data || []);
     } catch (error: any) {
-      console.error('Erro ao carregar solicitações:', error);
+      logger.error('Erro ao carregar solicitações:', error);
     }
   };
 

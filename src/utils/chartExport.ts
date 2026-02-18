@@ -2,6 +2,8 @@
  * Utilitário para exportar gráficos como imagem
  */
 
+import { logger } from '@/utils/logger';
+
 export interface ExportOptions {
   format?: 'png' | 'jpeg' | 'svg' | 'pdf';
   quality?: number; // 0-1 para JPEG
@@ -92,7 +94,7 @@ export async function exportChartAsImage(
     const blob = await exportCanvasAsImage(canvas, options);
     downloadImage(blob, filename);
   } catch (error) {
-    console.error('Error exporting chart:', error);
+    logger.error('Error exporting chart:', error);
     throw error;
   }
 }
@@ -110,7 +112,7 @@ export async function copyChartToClipboard(
     const item = new ClipboardItem({ 'image/png': blob });
     await navigator.clipboard.write([item]);
   } catch (error) {
-    console.error('Error copying chart to clipboard:', error);
+    logger.error('Error copying chart to clipboard:', error);
     throw error;
   }
 }
@@ -153,7 +155,7 @@ export async function exportChartAsSVG(
     const blob = new Blob([svgContent], { type: 'image/svg+xml' });
     downloadImage(blob, filename);
   } catch (error) {
-    console.error('Error exporting chart as SVG:', error);
+    logger.error('Error exporting chart as SVG:', error);
     throw error;
   }
 }
@@ -202,7 +204,7 @@ export function exportChartDataAsJSON(
 export function printChart(canvas: HTMLCanvasElement): void {
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
-    console.error('Could not open print window');
+    logger.error('Could not open print window');
     return;
   }
 

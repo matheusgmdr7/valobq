@@ -14,6 +14,7 @@ import { BinanceWebSocket, BinanceTick } from '@/services/binanceWebSocket';
 import { PriceAnimator } from '@/utils/priceAnimator';
 import { UpdateBatcher } from '@/utils/updateBatcher';
 import { CandlestickData } from '@/types/chart';
+import { logger } from '@/utils/logger';
 
 export interface UseTradingViewWebSocketOptions extends TradingViewConfig {
   onTick?: (tick: TradingViewTick | BinanceTick) => void;
@@ -239,7 +240,7 @@ export function useTradingViewWebSocket(
         await binanceWs.connect();
         setIsConnected(true);
       } catch (error) {
-        console.error('Failed to connect to Binance WebSocket:', error);
+        logger.error('Failed to connect to Binance WebSocket:', error);
         setIsConnected(false);
       }
     } else {

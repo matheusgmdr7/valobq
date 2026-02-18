@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 /**
  * Serviço para gerenciar notícias de mercado
@@ -90,7 +91,7 @@ export async function getMarketNews(
       return data.news;
     }
   } catch (error) {
-    console.error('Erro ao buscar da API, usando dados mockados:', error);
+    logger.error('Erro ao buscar da API, usando dados mockados:', error);
   }
 
   // Fallback para dados mockados

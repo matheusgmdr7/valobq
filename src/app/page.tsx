@@ -204,7 +204,7 @@ export default function LandingPage() {
         if (logoUrl) setBrokerLogo(logoUrl)
         if (brokerNameValue) setBrokerName(brokerNameValue)
       } catch (error) {
-        console.error('Erro ao carregar dados da broker:', error)
+        void error;
       }
     }
     loadBrokerData()

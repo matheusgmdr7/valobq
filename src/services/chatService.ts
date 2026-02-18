@@ -3,6 +3,8 @@
  * Usa API route server-side com service_role para evitar problemas de RLS
  */
 
+import { logger } from '@/utils/logger';
+
 /**
  * Verifica se uma string é um UUID válido
  */
@@ -57,7 +59,7 @@ export async function createChat(
 
     const json = await res.json();
     if (!res.ok) {
-      console.error('[ChatService] Error creating chat:', json.error);
+      logger.error('[ChatService] Error creating chat:', json.error);
       return null;
     }
 
@@ -71,7 +73,7 @@ export async function createChat(
       updatedAt: data.updated_at,
     };
   } catch (error) {
-    console.error('[ChatService] Error:', error instanceof Error ? error.message : 'Unknown error');
+    logger.error('[ChatService]', error instanceof Error ? error.message : 'Unknown error');
     return null;
   }
 }
@@ -89,7 +91,7 @@ export async function getUserChats(userId: string): Promise<Chat[]> {
     const json = await res.json();
 
     if (!res.ok) {
-      console.error('[ChatService] Error loading chats:', json.error);
+      logger.error('[ChatService] Error loading chats:', json.error);
       return [];
     }
 
@@ -102,7 +104,7 @@ export async function getUserChats(userId: string): Promise<Chat[]> {
       updatedAt: chat.updated_at,
     }));
   } catch (error) {
-    console.error('[ChatService] Error:', error instanceof Error ? error.message : 'Unknown error');
+    logger.error('[ChatService]', error instanceof Error ? error.message : 'Unknown error');
     return [];
   }
 }
@@ -135,7 +137,7 @@ export async function sendMessage(
 
     const json = await res.json();
     if (!res.ok) {
-      console.error('[ChatService] Error sending message:', json.error);
+      logger.error('[ChatService] Error sending message:', json.error);
       return null;
     }
 
@@ -149,7 +151,7 @@ export async function sendMessage(
       createdAt: data.created_at,
     };
   } catch (error) {
-    console.error('[ChatService] Error:', error instanceof Error ? error.message : 'Unknown error');
+    logger.error('[ChatService]', error instanceof Error ? error.message : 'Unknown error');
     return null;
   }
 }
@@ -167,7 +169,7 @@ export async function getChatMessages(chatId: string): Promise<ChatMessage[]> {
     const json = await res.json();
 
     if (!res.ok) {
-      console.error('[ChatService] Error loading messages:', json.error);
+      logger.error('[ChatService] Error loading messages:', json.error);
       return [];
     }
 
@@ -180,7 +182,7 @@ export async function getChatMessages(chatId: string): Promise<ChatMessage[]> {
       createdAt: msg.created_at,
     }));
   } catch (error) {
-    console.error('[ChatService] Error:', error instanceof Error ? error.message : 'Unknown error');
+    logger.error('[ChatService]', error instanceof Error ? error.message : 'Unknown error');
     return [];
   }
 }

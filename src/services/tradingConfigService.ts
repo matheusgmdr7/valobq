@@ -3,6 +3,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 export interface TradingConfig {
   symbol: string;
@@ -44,7 +45,7 @@ export async function getTradingConfig(symbol: string): Promise<TradingConfig | 
       if (error.code === 'PGRST116') {
         return null;
       }
-      console.error('Erro ao buscar configuração de trading:', error);
+      logger.error('Erro ao buscar configuração de trading:', error);
       return null;
     }
 
@@ -65,7 +66,7 @@ export async function getTradingConfig(symbol: string): Promise<TradingConfig | 
 
     return null;
   } catch (error) {
-    console.error('Erro ao buscar configuração de trading:', error);
+    logger.error('Erro ao buscar configuração de trading:', error);
     return null;
   }
 }
@@ -89,7 +90,7 @@ export async function getAllTradingConfigs(): Promise<Map<string, TradingConfig>
       if (error.code === '42P01' || error.message?.includes('does not exist')) {
         return new Map();
       }
-      console.error('Erro ao buscar configurações de trading:', error);
+      logger.error('Erro ao buscar configurações de trading:', error);
       return new Map();
     }
 
@@ -112,7 +113,7 @@ export async function getAllTradingConfigs(): Promise<Map<string, TradingConfig>
 
     return configMap;
   } catch (error) {
-    console.error('Erro ao buscar configurações de trading:', error);
+    logger.error('Erro ao buscar configurações de trading:', error);
     return new Map();
   }
 }

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 /**
  * Serviço para gerenciar ranking de líderes
@@ -63,7 +64,7 @@ export async function getLeaderboard(
       avatar: item.avatar,
     }));
   } catch (error) {
-    console.error('Erro ao buscar leaderboard:', error);
+    logger.error('Erro ao buscar leaderboard:', error);
     return getMockLeaderboard();
   }
 }
@@ -141,7 +142,7 @@ export async function getUserRank(userId: string): Promise<LeaderboardEntry | nu
       avatar: data.avatar,
     };
   } catch (error) {
-    console.error('Erro ao buscar rank do usuário:', error);
+    logger.error('Erro ao buscar rank do usuário:', error);
     return null;
   }
 }

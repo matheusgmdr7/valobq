@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { getEconomicCalendar, EconomicEvent, getCountryFlag } from '@/services/economicCalendarService';
 import { getMarketNews, MarketNews } from '@/services/marketNewsService';
 import { Newspaper, Calendar, Building2 } from 'lucide-react';
+import { logger } from '@/utils/logger';
 
 interface MarketAnalysisProps {
   onClose: () => void;
@@ -29,7 +30,7 @@ export const MarketAnalysis: React.FC<MarketAnalysisProps> = ({ onClose }) => {
       const data = await getEconomicCalendar();
       setEvents(data);
     } catch (error) {
-      console.error('Erro ao carregar calendário econômico:', error);
+      logger.error('Erro ao carregar calendário econômico:', error);
     } finally {
       setLoading(false);
     }
@@ -41,7 +42,7 @@ export const MarketAnalysis: React.FC<MarketAnalysisProps> = ({ onClose }) => {
       const data = await getMarketNews('all', 20);
       setNews(data);
     } catch (error) {
-      console.error('Erro ao carregar notícias:', error);
+      logger.error('Erro ao carregar notícias:', error);
     } finally {
       setLoading(false);
     }

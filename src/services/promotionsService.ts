@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/utils/logger';
 
 /**
  * Serviço para gerenciar promoções
@@ -31,7 +32,7 @@ export async function getAvailablePromotions(): Promise<Promotion[]> {
     // Por enquanto, retornar array vazio
     return [];
   } catch (error) {
-    console.error('Erro ao buscar promoções:', error);
+    logger.error('Erro ao buscar promoções:', error);
     return [];
   }
 }
@@ -48,7 +49,7 @@ export async function getPromotionHistory(userId: string): Promise<Promotion[]> 
     // TODO: Implementar query real
     return [];
   } catch (error) {
-    console.error('Erro ao buscar histórico de promoções:', error);
+    logger.error('Erro ao buscar histórico de promoções:', error);
     return [];
   }
 }

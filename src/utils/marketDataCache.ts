@@ -4,6 +4,8 @@
  * Gerencia cache de candles e dados de mercado com TTL
  */
 
+import { logger } from '@/utils/logger';
+
 export interface CachedMarketData {
   data: any;
   timestamp: number;
@@ -38,7 +40,7 @@ export function getCachedMarketData(key: string): any | null {
 
     return cached.data;
   } catch (error) {
-    console.error('Failed to get cached market data:', error);
+    logger.error('Failed to get cached market data:', error);
     return null;
   }
 }
@@ -67,7 +69,7 @@ export function setCachedMarketData(
       JSON.stringify(cached)
     );
   } catch (error) {
-    console.error('Failed to cache market data:', error);
+    logger.error('Failed to cache market data:', error);
     // Se localStorage estiver cheio, limpar caches antigos
     clearExpiredCache();
   }

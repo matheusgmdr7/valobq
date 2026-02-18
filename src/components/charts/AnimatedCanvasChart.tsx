@@ -5327,7 +5327,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         updateViewportAnimation();
         drawChart(); // drawChart já chama updateCandlePhysics internamente
       } catch (error) {
-        console.error('Chart render error:', error instanceof Error ? error.message : error, error instanceof Error ? error.stack : '');
+        
       }
       
       // CRÍTICO: Sempre agendar próximo frame para animação contínua
@@ -6737,7 +6737,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           ]);
           return true;
         } catch (error) {
-          console.error('Clipboard copy failed');
+          
           return false;
         }
       },
