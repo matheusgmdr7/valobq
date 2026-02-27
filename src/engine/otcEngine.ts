@@ -29,36 +29,37 @@ export interface OTCConfig {
 /** Configurações por categoria de ativo */
 const OTC_CONFIGS: Record<string, OTCConfig> = {
   forex: {
-    volatility: 0.00008,      // Forex tem volatilidade muito baixa por tick
-    meanReversionSpeed: 0.02,
-    tickIntervalMs: 1000,      // 1 tick por segundo
-    spreadPercent: 0.001,      // 0.001% spread
-    maxTrendStrength: 0.00003,
-    trendDurationTicks: 30,    // ~30 segundos por micro-tendência
+    // Calibrado para ~3-5 pips/min em EUR/USD (1.19): sqrt(100)*0.00002*1.19 ≈ 2.4 pips random
+    volatility: 0.00002,
+    meanReversionSpeed: 0.003,
+    tickIntervalMs: 600,
+    spreadPercent: 0.001,
+    maxTrendStrength: 0.000008,
+    trendDurationTicks: 80,
   },
   stocks: {
-    volatility: 0.0003,       // Ações têm mais volatilidade
-    meanReversionSpeed: 0.015,
-    tickIntervalMs: 1500,
+    volatility: 0.0001,
+    meanReversionSpeed: 0.005,
+    tickIntervalMs: 800,
     spreadPercent: 0.01,
-    maxTrendStrength: 0.0001,
-    trendDurationTicks: 20,
+    maxTrendStrength: 0.00005,
+    trendDurationTicks: 50,
   },
   indices: {
-    volatility: 0.00015,
-    meanReversionSpeed: 0.018,
-    tickIntervalMs: 1200,
+    volatility: 0.00007,
+    meanReversionSpeed: 0.005,
+    tickIntervalMs: 700,
     spreadPercent: 0.005,
-    maxTrendStrength: 0.00005,
-    trendDurationTicks: 25,
+    maxTrendStrength: 0.00004,
+    trendDurationTicks: 50,
   },
   commodities: {
-    volatility: 0.0002,
-    meanReversionSpeed: 0.012,
-    tickIntervalMs: 1300,
+    volatility: 0.00008,
+    meanReversionSpeed: 0.004,
+    tickIntervalMs: 800,
     spreadPercent: 0.008,
-    maxTrendStrength: 0.00008,
-    trendDurationTicks: 22,
+    maxTrendStrength: 0.00004,
+    trendDurationTicks: 50,
   },
 };
 
@@ -191,9 +192,9 @@ class OTCSymbolEngine {
     // 4. Componente aleatório (ruído gaussiano)
     const randomComponent = this.gaussianRandom() * volatility * this.currentPrice;
     
-    // 5. Momentum (inércia do movimento anterior)
-    this.momentum = this.momentum * 0.7 + (this.currentPrice - this.lastPrice) * 0.3;
-    const momentumComponent = this.momentum * 0.5;
+    // 5. Momentum (inércia do movimento anterior) - fator reduzido para evitar impulsos
+    this.momentum = this.momentum * 0.5 + (this.currentPrice - this.lastPrice) * 0.2;
+    const momentumComponent = this.momentum * 0.3;
     
     // 6. Calcular novo preço
     this.lastPrice = this.currentPrice;
@@ -201,10 +202,11 @@ class OTCSymbolEngine {
     this.currentPrice = this.currentPrice + priceChange;
     
     // 7. Garantir que o preço não fique negativo ou excessivamente distante
-    const maxDeviation = this.basePrice * 0.005; // Máximo 0.5% de desvio do preço base
-    if (Math.abs(this.currentPrice - this.basePrice) > maxDeviation) {
-      // Forçar reversão à média
-      this.currentPrice = this.currentPrice + (this.basePrice - this.currentPrice) * 0.1;
+    const maxDeviation = this.basePrice * 0.02; // 2% de desvio máximo do preço base
+    const deviation = Math.abs(this.currentPrice - this.basePrice);
+    if (deviation > maxDeviation) {
+      const pullStrength = 0.05 + 0.15 * ((deviation - maxDeviation) / maxDeviation);
+      this.currentPrice = this.currentPrice + (this.basePrice - this.currentPrice) * pullStrength;
     }
     
     // 8. Calcular bid/ask
@@ -235,15 +237,12 @@ class OTCSymbolEngine {
    * Gera de trás para frente a partir do preço base
    */
   generateHistoricalCandles(count: number, intervalMs: number): OTCCandle[] {
-    const candles: OTCCandle[] = [];
     const now = Date.now();
     
-    // Configurar estado temporário para geração histórica
-    let price = this.basePrice;
+    // Ancorar no currentPrice (se engine está rodando) ou basePrice
+    const anchorPrice = this.currentPrice > 0 ? this.currentPrice : this.basePrice;
     const { volatility } = this.config;
     
-    // Gerar de trás para frente, depois inverter
-    // Usar seed baseado no símbolo para reproducibilidade
     let tempSeed = this.hashCode(`${this.symbol}:hist:${Math.floor(now / intervalMs)}`);
     
     const tempRandom = (): number => {
@@ -257,13 +256,13 @@ class OTCSymbolEngine {
       return Math.sqrt(-2 * Math.log(Math.max(u1, 0.0001))) * Math.cos(2 * Math.PI * u2);
     };
     
-    // Gerar candles do mais recente para o mais antigo
+    // Gerar candles do mais recente para o mais antigo, começando em anchorPrice
+    let price = anchorPrice;
     const rawCandles: OTCCandle[] = [];
     for (let i = 0; i < count; i++) {
       const candleTime = now - (i * intervalMs);
       const candleTimeAligned = Math.floor(candleTime / intervalMs) * intervalMs;
       
-      // Gerar OHLC para este candle
       const candleVolatility = volatility * Math.sqrt(intervalMs / 1000) * price;
       
       const open = price;
@@ -271,9 +270,7 @@ class OTCSymbolEngine {
       
       let high = open;
       let low = open;
-      let close = open;
       
-      // Simular ticks dentro do candle
       let innerPrice = open;
       for (let t = 0; t < ticksInCandle; t++) {
         const change = tempGaussian() * candleVolatility / Math.sqrt(ticksInCandle);
@@ -283,41 +280,34 @@ class OTCSymbolEngine {
         high = Math.max(high, innerPrice);
         low = Math.min(low, innerPrice);
       }
-      close = innerPrice;
+      const close = innerPrice;
       
-      // Garantir consistência OHLC
       high = Math.max(open, close, high);
       low = Math.min(open, close, low);
       
-      rawCandles.push({
-        time: candleTimeAligned,
-        open,
-        high,
-        low,
-        close,
-      });
+      rawCandles.push({ time: candleTimeAligned, open, high, low, close });
       
-      // O próximo candle (mais antigo) abre no close deste
       price = close;
     }
     
-    // Inverter para ordem cronológica (mais antigo primeiro)
+    // Inverter para ordem cronológica
     rawCandles.reverse();
     
-    // Ajustar para que o último candle feche próximo ao preço base
+    // Ajustar para que o ÚLTIMO candle feche exatamente em anchorPrice
+    // Isso garante continuidade perfeita com os live ticks
     if (rawCandles.length > 0) {
       const lastClose = rawCandles[rawCandles.length - 1].close;
-      const adjustment = this.basePrice / lastClose;
-      
-      // Aplicar ajuste gradual (mais forte nos candles recentes)
-      for (let i = 0; i < rawCandles.length; i++) {
-        const weight = i / rawCandles.length; // 0 = mais antigo, 1 = mais recente
-        const adj = 1 + (adjustment - 1) * weight;
-        
-        rawCandles[i].open *= adj;
-        rawCandles[i].high *= adj;
-        rawCandles[i].low *= adj;
-        rawCandles[i].close *= adj;
+      if (lastClose > 0 && anchorPrice > 0) {
+        const ratio = anchorPrice / lastClose;
+        for (let i = 0; i < rawCandles.length; i++) {
+          const weight = i / rawCandles.length;
+          const adj = 1 + (ratio - 1) * weight;
+          
+          rawCandles[i].open *= adj;
+          rawCandles[i].high *= adj;
+          rawCandles[i].low *= adj;
+          rawCandles[i].close *= adj;
+        }
       }
     }
     
@@ -325,9 +315,20 @@ class OTCSymbolEngine {
   }
 
   /**
-   * Atualiza o preço base (quando o mercado reabre e temos preço real)
+   * Atualiza o preço base suavemente (sem salto brusco)
+   * Transiciona o preço atual gradualmente em vez de pular
    */
   updateBasePrice(newPrice: number): void {
+    this.basePrice = newPrice;
+    this.meanPrice = newPrice;
+    // NÃO resetar currentPrice e lastPrice - deixar o motor transicionar suavemente
+    // A mean reversion vai puxar o preço atual em direção ao novo basePrice naturalmente
+  }
+
+  /**
+   * Força o preço para um valor específico (hard reset)
+   */
+  forcePrice(newPrice: number): void {
     this.basePrice = newPrice;
     this.meanPrice = newPrice;
     this.currentPrice = newPrice;
@@ -426,6 +427,16 @@ export class OTCEngineManager {
     // Criar engine temporária para gerar histórico
     const tempEngine = new OTCSymbolEngine(symbol, category, lastRealPrice, () => {});
     return tempEngine.generateHistoricalCandles(count, intervalMs);
+  }
+
+  /**
+   * Atualiza o preço base de um símbolo ativo (transição suave, sem parar)
+   */
+  updateBasePrice(symbol: string, newPrice: number): void {
+    const engine = this.engines.get(symbol);
+    if (engine) {
+      engine.updateBasePrice(newPrice);
+    }
   }
 
   /**

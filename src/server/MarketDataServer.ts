@@ -15,6 +15,7 @@ import { createClient, RedisClientType } from 'redis';
 import { marketService } from '../services/marketService';
 import { OTCEngineManager, OTCTick } from '../engine/otcEngine';
 import { shouldUseOTC, getMarketStatus, MarketCategory } from '../utils/marketHours';
+import { PRICE_DEFAULTS } from '../config/priceDefaults';
 
 try {
   const dotenv = require('dotenv');
@@ -240,50 +241,43 @@ function connectForex(symbol: string): void {
  * Inicia o motor sintético (OTC Engine) para um símbolo forex.
  * Gera ticks realistas via Ornstein-Uhlenbeck.
  */
+// PRICE_DEFAULTS importado de @/config/priceDefaults (compartilhado com API histórica)
+
 function startSyntheticForex(symbol: string): void {
   if (otcManager.isActive(symbol)) return;
   
   const pair = marketService.getPair(symbol);
   const category = (pair?.category || 'forex') as string;
-  
-  const PRICE_DEFAULTS: Record<string, number> = {
-    // Forex
-    'EUR/USD': 1.0850, 'GBP/USD': 1.2700, 'USD/JPY': 149.50,
-    'AUD/CAD': 0.8950, 'AUD/USD': 0.6550, 'USD/CAD': 1.3600,
-    'EUR/GBP': 0.8550, 'EUR/JPY': 162.50, 'GBP/JPY': 190.00,
-    'USD/BRL': 4.9500, 'NZD/USD': 0.6250, 'USD/CHF': 0.8750,
-    // Ações (stocks)
-    'AAPL': 264.00, 'GOOGL': 185.00, 'MSFT': 397.00,
-    'AMZN': 201.00, 'TSLA': 411.00, 'META': 639.00, 'NVDA': 185.00,
-    // Índices
-    'SPX': 5800.00, 'IXIC': 18500.00, 'DJI': 43000.00,
-    'FTSE': 8400.00, 'DAX': 18500.00, 'N225': 38000.00,
-    // Commodities
-    'XAU/USD': 2050.00, 'XAG/USD': 23.00, 'WTI/USD': 78.00,
-    'XBR/USD': 82.00, 'NG/USD': 2.50, 'XPT/USD': 920.00,
-  };
 
   const cachedPrice = lastRealPrices.get(symbol);
   if (cachedPrice && cachedPrice > 0) {
     console.log(`[Synthetic] Motor sintético para ${symbol} @ ${cachedPrice.toFixed(5)} (cache)`);
     otcManager.startSymbol(symbol, category, cachedPrice);
-  } else {
-    // Iniciar imediatamente com preço padrão para não deixar o usuário esperando
-    const defaultPrice = PRICE_DEFAULTS[symbol] || 100.0;
-    console.log(`[Synthetic] Motor sintético para ${symbol} @ ${defaultPrice} (padrão imediato)`);
-    otcManager.startSymbol(symbol, category, defaultPrice);
-    
-    // Em paralelo, tentar obter preço mais recente da API
-    fetchLastPriceForOTC(symbol, category).then(apiPrice => {
-      if (apiPrice > 0 && Math.abs(apiPrice - defaultPrice) / defaultPrice > 0.01) {
+    return;
+  }
+
+  // Iniciar IMEDIATAMENTE com preço default para nunca deixar sem dados
+  const defaultPrice = PRICE_DEFAULTS[symbol] || 100.0;
+  console.log(`[Synthetic] Motor sintético para ${symbol} @ ${defaultPrice} (default)`);
+  otcManager.startSymbol(symbol, category, defaultPrice);
+  
+  // Em paralelo, buscar preço real e corrigir se diferente
+  fetchLastPriceForOTC(symbol, category).then(apiPrice => {
+    if (apiPrice > 0) {
+      const diff = Math.abs(apiPrice - defaultPrice) / defaultPrice;
+      if (diff > 0.01) {
+        // Diferença grande (>1%): parar e reiniciar com preço correto
         lastRealPrices.set(symbol, apiPrice);
-        console.log(`[Synthetic] Atualizando preço de ${symbol}: ${defaultPrice} → ${apiPrice.toFixed(5)} (via API)`);
-        // Reiniciar o motor com o preço correto da API
+        console.log(`[Synthetic] Reset de ${symbol}: ${defaultPrice} → ${apiPrice.toFixed(5)} (diff ${(diff*100).toFixed(1)}%)`);
         otcManager.stopSymbol(symbol);
         otcManager.startSymbol(symbol, category, apiPrice);
+      } else if (diff > 0.002) {
+        // Diferença pequena: transição suave
+        lastRealPrices.set(symbol, apiPrice);
+        otcManager.updateBasePrice(symbol, apiPrice);
       }
-    }).catch(() => {});
-  }
+    }
+  }).catch(() => {});
 }
 
 /**
@@ -293,7 +287,14 @@ function startSyntheticForex(symbol: string): void {
 function connectTwelveData(symbol: string, apiKey: string): void {
   const lastAttempt = lastConnectionAttempt.get(`twelvedata:${symbol}`);
   const now = Date.now();
-  if (lastAttempt && (now - lastAttempt) < CONNECTION_COOLDOWN) return;
+  if (lastAttempt && (now - lastAttempt) < CONNECTION_COOLDOWN) {
+    // Em cooldown — garantir que OTC está rodando como fallback
+    if (!otcManager.isActive(symbol)) {
+      console.log(`[TwelveData] Em cooldown para ${symbol}, iniciando motor sintético`);
+      startSyntheticForex(symbol);
+    }
+    return;
+  }
   
   const pair = marketService.getPair(symbol);
   if (!pair || !pair.enabled) return;
@@ -666,13 +667,10 @@ function startServer(): void {
             }
           } else {
             // Mercado aberto: TwelveData WS → fallback motor sintético
+            // Se OTC já está ativo (TwelveData falhou antes), NÃO parar — manter dados fluindo
             if (otcManager.isActive(symbol)) {
-              otcManager.stopSymbol(symbol);
-            }
-            const hasConnection = 
-              upstreamConnections.has(`twelvedata:${symbol}`) ||
-              otcManager.isActive(symbol);
-            if (!hasConnection) {
+              // OTC já está rodando como fallback, manter
+            } else if (!upstreamConnections.has(`twelvedata:${symbol}`)) {
               connectForex(symbol);
             }
           }

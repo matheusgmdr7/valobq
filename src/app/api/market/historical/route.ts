@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { shouldUseOTC, MarketCategory } from '@/utils/marketHours';
 import { OTCEngineManager } from '@/engine/otcEngine';
+import { PRICE_DEFAULTS } from '@/config/priceDefaults';
 
 export async function GET(request: NextRequest) {
   try {
@@ -352,26 +353,9 @@ async function generateOTCHistorical(
       }
     }
     
-    // Fallback: preços padrão hardcoded
+    // Fallback: preços padrão compartilhados (mesmos do MarketDataServer)
     if (!basePrice || !isFinite(basePrice)) {
-      const defaults: Record<string, number> = {
-        // Forex
-        'EUR/USD': 1.0850, 'GBP/USD': 1.2700, 'USD/JPY': 149.50,
-        'AUD/CAD': 0.8950, 'AUD/USD': 0.6550, 'USD/CAD': 1.3600,
-        'EUR/GBP': 0.8550, 'EUR/JPY': 162.50, 'GBP/JPY': 190.00,
-        'USD/BRL': 4.9500, 'NZD/USD': 0.6250, 'USD/CHF': 0.8750,
-        // Commodities
-        'XAU/USD': 2050.00, 'XAG/USD': 23.50,
-        'WTI/USD': 78.50, 'XBR/USD': 82.00, 'NG/USD': 2.85,
-        'XPT/USD': 920.00,
-        // Ações (stocks)
-        'AAPL': 264.00, 'GOOGL': 185.00, 'MSFT': 397.00,
-        'AMZN': 201.00, 'TSLA': 411.00, 'META': 639.00, 'NVDA': 185.00,
-        // Índices
-        'SPX': 5800.00, 'IXIC': 18500.00, 'DJI': 43000.00,
-        'FTSE': 8400.00, 'DAX': 18500.00, 'N225': 38000.00,
-      };
-      basePrice = defaults[symbol] || 100;
+      basePrice = PRICE_DEFAULTS[symbol] || 100;
     }
     
     // Gerar candles OTC sintéticos

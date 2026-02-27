@@ -828,7 +828,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       if (!liveCandleRef.current) return;
       
       const engine = candleEngineRef.current;
-      const finalClose = engine.visualPrice > 0 ? engine.visualPrice : liveCandleRef.current.close;
+      // Usar realPrice (preço real do último tick) em vez de visualPrice (interpolado)
+      // para evitar gaps laterais entre candles
+      const finalClose = engine.realPrice > 0 ? engine.realPrice : liveCandleRef.current.close;
       const high = Math.max(liveCandleRef.current.high, finalClose);
       const low = Math.min(liveCandleRef.current.low, finalClose);
       const close = Math.max(low, Math.min(high, finalClose));
@@ -986,19 +988,41 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         const lastCandle = candlesRef.current[candlesRef.current.length - 1];
         const lastPeriod = getBarTime(lastCandle.time, timeframe);
         
+        // Bridge: eliminar gap entre histórico e live na transição
+        if (firstTickAfterHistoryRef.current && candlesRef.current.length > 0) {
+          firstTickAfterHistoryRef.current = false;
+          const lastClose = lastCandle.close;
+          const gap = Math.abs(tickPrice - lastClose) / lastClose;
+          if (gap > 0.001) {
+            // Gap > 0.1%: ajustar últimos candles para transição suave
+            const bridgeCount = Math.min(20, candlesRef.current.length);
+            const totalLen = candlesRef.current.length;
+            for (let i = 0; i < bridgeCount; i++) {
+              const idx = totalLen - bridgeCount + i;
+              const weight = (i + 1) / bridgeCount;
+              const shift = (tickPrice - lastClose) * weight;
+              candlesRef.current[idx].open += shift;
+              candlesRef.current[idx].high += shift;
+              candlesRef.current[idx].low += shift;
+              candlesRef.current[idx].close += shift;
+            }
+            clearLiveCandleCache();
+          }
+        }
+        
         if (periodStart > lastPeriod) {
-          // Novo período — congelar live candle anterior, criar novo
           if (liveCandleRef.current) {
+            liveCandleRef.current.close = tickPrice;
             freezeLiveCandle();
           }
           createLiveCandle(periodStart, tickPrice, tickTime);
         } else {
-          // Mesmo período — atualizar live candle existente ou criar
           if (!liveCandleRef.current) {
             createLiveCandle(periodStart, tickPrice, tickTime);
           } else {
             liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
             liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
+            liveCandleRef.current.close = tickPrice;
             const engine = candleEngineRef.current;
             engine.realPrice = tickPrice;
             engine.lastTickTime = tickTime;
@@ -1008,6 +1032,34 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
       if (onPriceUpdate) onPriceUpdate(tickPrice);
     }, [lastTick, timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle]);
+
+    // Handler de visibilidade da página - ao voltar à aba, resetar motor de física
+    // para evitar saltos e gaps causados por ticks acumulados enquanto a aba estava inativa
+    useEffect(() => {
+      const handleVisibility = () => {
+        if (document.hidden) return;
+        
+        const engine = candleEngineRef.current;
+        if (engine.realPrice > 0) {
+          engine.visualPrice = engine.realPrice;
+          engine.velocity = 0;
+          engine.inertia = 0;
+          engine.lastFrameTime = performance.now();
+          engine.lastTickTime = Date.now();
+        }
+        
+        // Sincronizar live candle com o preço real mais recente
+        if (liveCandleRef.current && engine.realPrice > 0) {
+          liveCandleRef.current.close = engine.realPrice;
+          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, engine.realPrice);
+          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, engine.realPrice);
+          clearLiveCandleCache();
+        }
+      };
+
+      document.addEventListener('visibilitychange', handleVisibility);
+      return () => document.removeEventListener('visibilitychange', handleVisibility);
+    }, [clearLiveCandleCache]);
 
     // CRÍTICO: Criar live candle imediatamente quando o período muda, sem esperar por tick
     // Isso elimina o delay na abertura do novo candle
