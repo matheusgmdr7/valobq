@@ -1,3 +1,8 @@
+# fly.toml app configuration file generated for valobq on 2026-06-28T23:09:35Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = 'valobq'
 primary_region = 'gru'
 
@@ -5,13 +10,13 @@ primary_region = 'gru'
   dockerfile = 'Dockerfile'
 
   [build.args]
-    NEXT_PUBLIC_SUPABASE_URL = 'https://tgrhgkqpqsnkhewnmarr.supabase.co'
-    NEXT_PUBLIC_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRncmhna3FwcXNua2hld25tYXJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMzI3MzEsImV4cCI6MjA4MzkwODczMX0.Am-rYaY9wiIBbXAirbkZj0gau5kxR_Dx2QiMrQC2xns'
     NEXT_PUBLIC_MARKET_DATA_WS_URL = 'wss://valoren-market.fly.dev'
+    NEXT_PUBLIC_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRncmhna3FwcXNua2hld25tYXJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMzI3MzEsImV4cCI6MjA4MzkwODczMX0.Am-rYaY9wiIBbXAirbkZj0gau5kxR_Dx2QiMrQC2xns'
+    NEXT_PUBLIC_SUPABASE_URL = 'https://tgrhgkqpqsnkhewnmarr.supabase.co'
 
 [env]
-  NODE_ENV = 'production'
   NEXT_TELEMETRY_DISABLED = '1'
+  NODE_ENV = 'production'
   PORT = '3000'
 
 [http_service]
@@ -30,3 +35,4 @@ primary_region = 'gru'
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 1024
