@@ -21,3 +21,8 @@ DROP POLICY IF EXISTS "Admins can delete deposits" ON deposits;
 CREATE POLICY "Admins can delete deposits"
   ON deposits FOR DELETE
   USING (is_admin_user(auth.uid()));
+
+
+
+
+

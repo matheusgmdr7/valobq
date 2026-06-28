@@ -14,7 +14,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 interface AnalyticsData {
   totalUsers: number;

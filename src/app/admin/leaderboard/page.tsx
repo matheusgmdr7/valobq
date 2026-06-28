@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Search, X, UserPlus, Edit, Trash2, Save } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getLeaderboard, LeaderboardEntry } from '@/services/leaderboardService';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 interface User {
   id: string;

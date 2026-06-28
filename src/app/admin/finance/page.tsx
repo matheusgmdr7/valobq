@@ -8,7 +8,7 @@ import {
   ArrowDownRight, ArrowUpRight, Filter, Search
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 type PeriodFilter = '7d' | '15d' | '30d' | '90d' | 'all';
 

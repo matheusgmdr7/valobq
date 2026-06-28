@@ -3,16 +3,17 @@
  * 
  * Busca dados históricos de:
  * - Binance (crypto) - sempre dados reais
- * - Twelve Data (forex/stocks/indices/commodities) - mercado aberto
- * - OTC Engine (sintético) - mercado fechado
+ * - OTC Engine (sintético) - forex (padrão) e mercado fechado
+ * - Twelve Data (forex/stocks/indices/commodities) - apenas se FOREX_SYNTHETIC_ONLY=false e mercado aberto
  * 
  * A API key fica no servidor, não exposta no cliente
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { shouldUseOTC, MarketCategory } from '@/utils/marketHours';
+import { shouldUseOTC, MarketCategory, isMarketOpen } from '@/utils/marketHours';
+import { isForexSyntheticOnly } from '@/config/forexData';
 import { OTCEngineManager } from '@/engine/otcEngine';
-import { PRICE_DEFAULTS } from '@/config/priceDefaults';
+import { resolveAnchorPrice } from '@/services/anchorPrice';
 
 export async function GET(request: NextRequest) {
   try {
@@ -137,7 +138,7 @@ async function fetchBinanceHistorical(
       close: parseFloat(kline[4]),
     }));
 
-    return NextResponse.json({ candles });
+    return NextResponse.json({ candles, isOTC: false, source: 'binance' });
   } catch (error: any) {
     console.error('[API] Error:', error instanceof Error ? error.message : 'Unknown');
     return NextResponse.json(
@@ -286,7 +287,14 @@ async function fetchTwelveDataHistorical(
       .filter(Boolean)
       .reverse(); // Twelve Data retorna do mais recente para o mais antigo, inverter
 
-    return NextResponse.json({ candles });
+    const anchorPrice = candles.length > 0 ? candles[candles.length - 1].close : undefined;
+
+    return NextResponse.json({
+      candles,
+      isOTC: false,
+      source: 'twelvedata',
+      ...(anchorPrice !== undefined ? { anchorPrice } : {}),
+    });
   } catch (error: any) {
     // Relançar para que o handler principal faça fallback para OTC
     throw error;
@@ -310,58 +318,13 @@ async function generateOTCHistorical(
       '1d': 86400000, '1w': 604800000, '1M': 2592000000,
     };
     const intervalMs = intervalMsMap[timeframe] || 60000;
-    
-    // Buscar último preço real para usar como base do OTC
-    let basePrice = 0;
-    const apiKey = process.env.TWELVEDATA_API_KEY || '';
-    if (apiKey) {
-      // Tentar 1: time_series (1 candle diário)
-      try {
-        const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1day&outputsize=1&timezone=UTC&apikey=${apiKey}&format=json`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-        const response = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (response.ok) {
-          const data: any = await response.json();
-          if (data.values && data.values.length > 0) {
-            basePrice = parseFloat(data.values[0].close);
-          }
-        }
-      } catch (e) {
-        // Fallback to price endpoint below
-      }
-      
-      // Tentar 2: /price endpoint (mais leve, usa menos créditos)
-      if (!basePrice || !isFinite(basePrice)) {
-        try {
-          const priceUrl = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
-          const controller2 = new AbortController();
-          const timeoutId2 = setTimeout(() => controller2.abort(), 5000);
-          const priceRes = await fetch(priceUrl, { signal: controller2.signal });
-          clearTimeout(timeoutId2);
-          if (priceRes.ok) {
-            const priceData: any = await priceRes.json();
-            if (priceData.price) {
-              const p = parseFloat(priceData.price);
-              if (isFinite(p) && p > 0) basePrice = p;
-            }
-          }
-        } catch (e) {
-          // Fallback to defaults below
-        }
-      }
-    }
-    
-    // Fallback: preços padrão compartilhados (mesmos do MarketDataServer)
-    if (!basePrice || !isFinite(basePrice)) {
-      basePrice = PRICE_DEFAULTS[symbol] || 100;
-    }
-    
-    // Gerar candles OTC sintéticos
+
+    const skipTwelveData = category === 'forex' && isForexSyntheticOnly();
+    const { price: basePrice, source: anchorSource } = await resolveAnchorPrice(symbol, { skipTwelveData });
+
     const otcMgr = new OTCEngineManager(() => {});
     const otcCandles = otcMgr.generateHistorical(symbol, category, basePrice, limit, intervalMs);
-    
+
     const candles = otcCandles.map(c => ({
       time: Math.floor(c.time / 1000),
       open: c.open,
@@ -369,10 +332,23 @@ async function generateOTCHistorical(
       low: c.low,
       close: c.close,
     }));
-    
-    return NextResponse.json({ candles, isOTC: true });
+
+    const marketCategory = category as MarketCategory;
+
+    return NextResponse.json({
+      candles,
+      isOTC: !isMarketOpen(marketCategory),
+      source: 'otc',
+      anchorPrice: basePrice,
+      anchorSource,
+    });
   } catch (error: any) {
     console.error('[API] Error:', error instanceof Error ? error.message : 'Unknown');
-    return NextResponse.json({ candles: [], isOTC: true });
+    const marketCategory = category as MarketCategory;
+    return NextResponse.json({
+      candles: [],
+      isOTC: !isMarketOpen(marketCategory),
+      source: 'otc',
+    });
   }
 }

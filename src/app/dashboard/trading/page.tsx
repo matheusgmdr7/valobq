@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   Plus, 
@@ -77,10 +77,13 @@ import {
 } from 'lucide-react';
 import { AnimatedCanvasChart, AnimatedCanvasChartRef } from '@/components/charts/AnimatedCanvasChart';
 import { MarketLoading } from '@/components/ui/MarketLoading';
+import { ChartLoadingScreen } from '@/components/ui/ChartLoadingScreen';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useActiveTrades } from '@/hooks/useActiveTrades';
 import { marketService } from '@/services/marketService';
+import { getMarketStatus, MarketCategory } from '@/utils/marketHours';
 import { tradeService } from '@/services/tradeService';
+import { settleTrade } from '@/utils/tradeSettlement';
 import { getAllTradingConfigs } from '@/services/tradingConfigService';
 import { PortfolioTotal } from '@/components/trading/PortfolioTotal';
 import { TradeHistory } from '@/components/trading/TradeHistory';
@@ -92,7 +95,8 @@ import toast from 'react-hot-toast';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { Trade } from '@/lib/db';
-import { useSounds } from '@/hooks/useSounds';
+import { useSounds, playClickFromEvent } from '@/hooks/useSounds';
+import { AddPairModal } from '@/components/trading/AddPairModal';
 
 // Calcula o próximo minuto cheio a partir do horário atual
 const getNextMinute = (reference: Date) => {
@@ -140,7 +144,14 @@ const TradingPage: React.FC = () => {
   // Ref para evitar stale closure no processTradeResult
   const activeBalanceRef = React.useRef(activeBalance);
   activeBalanceRef.current = activeBalance;
-  const { soundEnabled, toggleSound, playClick, playWin, playLoss } = useSounds();
+  const { soundEnabled, toggleSound, playUiClick, playTradeClick, playWin, playLoss } = useSounds();
+
+  const handleUiButtonClick = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => {
+      playClickFromEvent(e, { playUiClick, playTradeClick });
+    },
+    [playUiClick, playTradeClick],
+  );
 
   // Auto-reload quando o usuário volta à página após inatividade (evita candles desordenados)
   useEffect(() => {
@@ -189,6 +200,14 @@ const TradingPage: React.FC = () => {
     }
     return 'BTC/USD';
   });
+
+  /** Após o primeiro carregamento do gráfico, só overlay compacto ao trocar ativo */
+  const [initialPageReady, setInitialPageReady] = useState(false);
+  const handleChartLoadingChange = useCallback((loading: boolean) => {
+    if (!loading) {
+      setInitialPageReady(true);
+    }
+  }, []);
   
   const [addedPairs, setAddedPairs] = useState<string[]>(() => {
     if (typeof window !== 'undefined') {
@@ -240,6 +259,10 @@ const TradingPage: React.FC = () => {
   const sentimentRef = useRef<{ base: number; trend: number; trendTicks: number }>({ base: 50, trend: 0, trendTicks: 0 });
   // Estado para armazenar configurações de trading
   const [tradingConfigs, setTradingConfigs] = useState<Map<string, { payout_percentage: number }>>(new Map());
+  const tradingConfigsRef = useRef(tradingConfigs);
+  tradingConfigsRef.current = tradingConfigs;
+  const outcomeControlRef = useRef(user?.outcomeControl ?? 'off');
+  outcomeControlRef.current = user?.outcomeControl ?? 'off';
   const [showSentimentTooltip, setShowSentimentTooltip] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
@@ -317,6 +340,70 @@ const TradingPage: React.FC = () => {
     () => getNextMinute(currentTime),
     [currentTime]
   );
+
+  const mobileTradePanelRef = useRef<HTMLDivElement>(null);
+  const [mobileTradePanelHeight, setMobileTradePanelHeight] = useState(132);
+  const mobileHeaderHeight = isLandscape ? 58 : 108;
+
+  useEffect(() => {
+    if (!isMobile || !mobileTradePanelRef.current) return;
+    const el = mobileTradePanelRef.current;
+    const update = () => setMobileTradePanelHeight(el.getBoundingClientRect().height);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isMobile, isLandscape]);
+
+  const adjustTradeValue = (delta: number) => {
+    setTradeValue((prev) => Math.max(10, prev + delta));
+  };
+
+  const adjustExpirationMinutes = (delta: number) => {
+    expirationTimeManuallySet.current = true;
+    const newTime = new Date(expirationTime);
+    newTime.setMinutes(newTime.getMinutes() + delta);
+    newTime.setSeconds(0);
+    newTime.setMilliseconds(0);
+    if (newTime.getTime() < minimumExpiration.getTime()) {
+      setExpirationTime(new Date(minimumExpiration));
+    } else {
+      setExpirationTime(newTime);
+    }
+  };
+
+  const executeTrade = async (type: 'call' | 'put') => {
+    if (!user) {
+      toast.error('Usuário não autenticado');
+      return;
+    }
+    if (tradeValue > activeBalance) {
+      toast.error('Saldo insuficiente');
+      return;
+    }
+    try {
+      const snapshotPrice = chartRef.current?.getCurrentPrice() || currentPrice || 0;
+      const expirationTimestamp = expirationTime.getTime();
+      const result = await tradeService.executeTrade({
+        userId: user.id,
+        symbol: selectedAsset,
+        type,
+        amount: tradeValue,
+        expiration: expirationTimestamp,
+        entryPrice: snapshotPrice,
+      });
+      if (result.success) {
+        const newTrade: Trade = { ...result.trade, entryPrice: snapshotPrice };
+        setLocalActiveTrades((prev) => [...prev, newTrade]);
+        localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
+        if (user) animateBalance(activeBalance, activeBalance - tradeValue);
+      } else {
+        toast.error(result.message || 'Erro ao executar trade');
+      }
+    } catch {
+      toast.error('Erro ao executar trade');
+    }
+  };
 
   // Paleta de cores pré-definidas (28 cores + transparente)
   // Paleta de cores reduzida (12 cores principais)
@@ -581,7 +668,7 @@ const TradingPage: React.FC = () => {
   // Buscar dados de mercado reais (apenas para referência)
   // Nota: O AnimatedCanvasChart usa seu próprio sistema de agrupamento por timeframe
   // Este hook é apenas para referência de preço atual
-  const { candles: candlestickData, currentPrice: marketPrice, pair, loading: marketLoading } = useMarketData({
+  const { currentPrice: marketPrice, pair } = useMarketData({
     symbol: selectedAsset,
     timeframe: '1m', // Sempre buscar dados de 1m, o AnimatedCanvasChart agrupa por timeframe selecionado
     limit: 100,
@@ -593,6 +680,24 @@ const TradingPage: React.FC = () => {
     const pairs = marketService.getPairs();
     setAvailablePairs(pairs.map(p => p.symbol));
   }, []);
+
+  // Badge OTC: só no horário/dia de mercado fechado (atualiza ao trocar ativo e a cada 30s)
+  useEffect(() => {
+    const pair = marketService.getPair(selectedAsset);
+    if (!pair) return;
+
+    const refreshMarketStatus = () => {
+      if (pair.category === 'crypto') {
+        setMarketStatus(getMarketStatus('crypto'));
+        return;
+      }
+      setMarketStatus(getMarketStatus(pair.category as MarketCategory));
+    };
+
+    refreshMarketStatus();
+    const interval = setInterval(refreshMarketStatus, 30000);
+    return () => clearInterval(interval);
+  }, [selectedAsset]);
 
   // Atualizar tempo a cada segundo (usar performance.now para evitar atrasos)
   useEffect(() => {
@@ -647,78 +752,85 @@ const TradingPage: React.FC = () => {
     requestAnimationFrame(animate);
   };
 
-  // Função processTradeResult - Fonte única de verdade: Backend
+  // Função processTradeResult — gráfico + IMA definem resultado; saldo atualiza na hora
   const processTradeResult = async (trade: Trade) => {
     if (processedTradeIdsRef.current.has(trade.id)) {
       return;
     }
-    processedTradeIdsRef.current.add(trade.id);
 
-    // 1. Obter preço de saída correto para o SÍMBOLO DA TRADE (não do gráfico atual)
-    let finalPrice: number;
-    const isCurrentSymbol = trade.symbol === selectedAsset;
-    
-    if (isCurrentSymbol && chartRef.current) {
-      finalPrice = chartRef.current.getCurrentPrice();
-    } else {
-      finalPrice = lastKnownPricesRef.current.get(trade.symbol) || 0;
-    }
-    
-    // Se não temos preço válido, não podemos resolver a trade
-    if (!finalPrice || finalPrice <= 0 || !isFinite(finalPrice)) {
-      // Sem preço válido, adiar resolução
-      processedTradeIdsRef.current.delete(trade.id);
+    const getPayoutPercent = (symbol: string) => {
+      const config = tradingConfigsRef.current.get(symbol);
+      const pair = marketService.getPair(symbol);
+      return config?.payout_percentage ?? pair?.payout ?? 88;
+    };
+
+    const resolveMarketExitPrice = (): number | null => {
+      const isCurrentSymbol = trade.symbol === selectedAsset;
+      if (isCurrentSymbol && chartRef.current) {
+        const p = chartRef.current.getCurrentPrice();
+        if (p > 0 && isFinite(p)) return p;
+      }
+      const cached = lastKnownPricesRef.current.get(trade.symbol);
+      if (cached && cached > 0) return cached;
+      const pair = marketService.getPair(trade.symbol);
+      if (pair?.currentPrice && pair.currentPrice > 0) return pair.currentPrice;
+      return null;
+    };
+
+    const marketExitPrice = resolveMarketExitPrice();
+    if (!marketExitPrice) {
       return;
     }
-    
-    // 2. Cálculo do resultado com tolerância para empate (evita falhas de floating-point)
-    const priceDiff = finalPrice - trade.entryPrice;
-    const epsilon = trade.entryPrice * 0.000001; // 0.0001% de tolerância
-    const isDraw = Math.abs(priceDiff) < epsilon;
-    const isWin = isDraw ? false : (trade.type === 'call' ? priceDiff > 0 : priceDiff < 0);
-    
-    const payoutPercent = 0.88;
-    
-    
-    
-    // 3. Atualizar trade local com resultado
+
+    processedTradeIdsRef.current.add(trade.id);
+
+    const payoutPercent = getPayoutPercent(trade.symbol);
+    const settlement = settleTrade({
+      entryPrice: trade.entryPrice,
+      marketExitPrice,
+      type: trade.type,
+      amount: trade.amount,
+      payoutPercent,
+      outcomeControl: outcomeControlRef.current,
+    });
+
+    const { exitPrice, isDraw, isWin, result, profit, balanceDeltaAtClose } = settlement;
+
     const updatedTrade: Trade = {
       ...trade,
-      exitPrice: finalPrice,
-      result: isDraw ? undefined : (isWin ? 'win' : 'loss'),
-      profit: isDraw ? 0 : (isWin ? trade.amount * payoutPercent : -trade.amount),
+      exitPrice,
+      result: result ?? undefined,
+      profit,
     };
-    
+
     setLocalActiveTrades(prev => prev.map(t => t.id === trade.id ? updatedTrade : t));
     localActiveTradesRef.current = localActiveTradesRef.current.map(t => t.id === trade.id ? updatedTrade : t);
-    
-    if (!isDraw) {
-      const resultData = {
-        result: isWin ? 'win' as const : 'loss' as const,
-        profit: isWin ? trade.amount * payoutPercent : -trade.amount,
-        timestamp: Date.now(),
-      };
-      setTradeResults(prev => ({ ...prev, [trade.symbol]: resultData }));
+
+    if (user && balanceDeltaAtClose !== 0) {
+      const currentBalance = activeBalanceRef.current;
+      animateBalance(currentBalance, currentBalance + balanceDeltaAtClose);
     }
-    
-    // 4. Feedback Sonoro e Visual
+
+    if (!isDraw && result) {
+      setTradeResults(prev => ({
+        ...prev,
+        [trade.symbol]: { result, profit, timestamp: Date.now() },
+      }));
+    }
+
     if (!isDraw) {
-      if (isWin) {
-        playWin();
-      } else {
-        playLoss();
-      }
-      const profitDisplay = isWin ? trade.amount * payoutPercent : trade.amount;
+      if (isWin) playWin();
+      else playLoss();
+
+      const profitDisplay = isWin ? trade.amount * (payoutPercent / 100) : trade.amount;
       toast.custom((t) => (
         <div
-          className={`${
-            t.visible ? 'animate-enter' : 'animate-leave'
-          } pointer-events-auto overflow-hidden`}
+          className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto overflow-hidden`}
           style={{
             borderRadius: '6px',
             width: '260px',
-            background: isWin 
-              ? 'linear-gradient(135deg, #052e16 0%, #064e3b 100%)' 
+            background: isWin
+              ? 'linear-gradient(135deg, #052e16 0%, #064e3b 100%)'
               : 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)',
             border: `1px solid ${isWin ? '#22c55e30' : '#ef444430'}`,
             boxShadow: `0 4px 12px ${isWin ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'}`,
@@ -729,10 +841,7 @@ const TradingPage: React.FC = () => {
               <p className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
                 {isWin ? 'Operação Vencedora' : 'Operação Perdida'}
               </p>
-              <button
-                onClick={() => toast.dismiss(t.id)}
-                className="text-gray-500 hover:text-gray-300 transition-colors"
-              >
+              <button onClick={() => toast.dismiss(t.id)} className="text-gray-500 hover:text-gray-300 transition-colors">
                 <X className="w-3 h-3" />
               </button>
             </div>
@@ -740,13 +849,11 @@ const TradingPage: React.FC = () => {
               <span className="text-base font-bold text-white">
                 {isWin ? '+' : '-'}R$ {profitDisplay.toFixed(2)}
               </span>
-              <span className="text-[10px] text-gray-400">
-                {trade.symbol}
-              </span>
+              <span className="text-[10px] text-gray-400">{trade.symbol}</span>
             </div>
           </div>
           <div className="h-[2px] w-full" style={{ background: 'rgba(255,255,255,0.05)' }}>
-            <div 
+            <div
               className="h-full"
               style={{
                 background: isWin ? '#22c55e' : '#ef4444',
@@ -755,69 +862,12 @@ const TradingPage: React.FC = () => {
             />
           </div>
         </div>
-      ), { 
-        duration: 4000,
-        position: 'top-right',
-      });
+      ), { duration: 4000, position: 'top-right' });
     }
-    
-    // 5. Sincronizar com Backend (fonte de verdade para o banco de dados)
-    // O backend recalcula win/loss com o mesmo exitPrice para garantir consistência
-    try {
-      const result = await tradeService.calculateTradeResult(trade.id, finalPrice);
-      
-      if (result.success && user) {
-        const backendResult = result.trade.result;
-        const backendProfit = result.trade.profit || 0;
-        const currentBalance = activeBalanceRef.current;
-        
-        // USAR O RESULTADO DO BACKEND para atualizar o saldo (fonte de verdade)
-        // Na abertura, o investimento já foi DESCONTADO
-        let newBalance: number;
-        if (isDraw) {
-          newBalance = currentBalance + trade.amount;
-        } else if (backendResult === 'win') {
-          newBalance = currentBalance + trade.amount + backendProfit;
-        } else {
-          newBalance = currentBalance;
-        }
-        
-        
-        
-        if (newBalance !== currentBalance) {
-          animateBalance(currentBalance, newBalance);
-        }
-        
-        // Se o backend discordou do frontend, corrigir o estado local
-        if (backendResult && backendResult !== updatedTrade.result) {
-          
-          const correctedTrade: Trade = {
-            ...updatedTrade,
-            result: backendResult,
-            profit: backendProfit,
-          };
-          setLocalActiveTrades(prev => prev.map(t => t.id === trade.id ? correctedTrade : t));
-          localActiveTradesRef.current = localActiveTradesRef.current.map(t => t.id === trade.id ? correctedTrade : t);
-        }
-      }
-    } catch (error) {
-      
-      // Fallback: usar resultado do frontend para atualizar saldo
-      if (user) {
-        const currentBalance = activeBalanceRef.current;
-        let newBalance: number;
-        if (isDraw) {
-          newBalance = currentBalance + trade.amount;
-        } else if (isWin) {
-          newBalance = currentBalance + trade.amount + (trade.amount * payoutPercent);
-        } else {
-          newBalance = currentBalance;
-        }
-        if (newBalance !== currentBalance) {
-          animateBalance(currentBalance, newBalance);
-        }
-      }
-    }
+
+    tradeService.persistTradeResult(trade.id, exitPrice, result, profit).catch(() => {
+      /* persistência em background — saldo já refletido na UI */
+    });
   };
 
   // Loop de 60 FPS para verificar trades expirados (substitui verificação de 5 segundos)
@@ -857,6 +907,29 @@ const TradingPage: React.FC = () => {
       localActiveTradesRef.current = [...localActiveTradesRef.current, ...newTrades];
     }
   }, [activeTrades]);
+
+  // Liquidar trades expirados sem resultado (ex.: após reload)
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    const reconcileExpired = async () => {
+      try {
+        const all = await tradeService.getUserTrades(user.id, 200);
+        if (cancelled) return;
+        const expired = all.filter(t => !t.result && t.expiration <= Date.now());
+        for (const t of expired) {
+          if (cancelled) break;
+          await processTradeResult(t);
+        }
+      } catch {
+        /* ignorar — loop RAF continua tentando trades locais */
+      }
+    };
+
+    reconcileExpired();
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   // Tick a cada 500ms para atualizar timers circulares nos cards de ativos + limpeza de resultados expirados
   useEffect(() => {
@@ -1532,7 +1605,7 @@ const TradingPage: React.FC = () => {
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="relative flex items-center justify-center h-64 min-h-[16rem]">
         <MarketLoading message="Carregando..." />
       </div>
     );
@@ -1714,7 +1787,11 @@ const TradingPage: React.FC = () => {
   const profit = Math.round(tradeValue * (profitPercent / 100));
 
   return (
-    <div className="fixed inset-0 bg-black text-white overflow-hidden">
+    <div
+      className="fixed inset-0 bg-black text-white overflow-hidden"
+      data-trading-ui
+      onClickCapture={handleUiButtonClick}
+    >
       {/* Top Bar - Modelo da Referência */}
       <div className={`absolute top-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-b border-gray-900/50 px-2 py-1.5 md:px-4 md:py-3.5 ${isMobile && isLandscape ? 'py-1' : ''}`}>
         {/* Linha 1: Logo + User Info + Saldo + Depositar */}
@@ -1962,180 +2039,6 @@ const TradingPage: React.FC = () => {
                 >
                   <Plus className="w-4 h-4" />
                 </button>
-                
-                {/* Modal de seleção de pares - Design igual ao modal de timeframes */}
-                {showAddPairModal && (
-                  <>
-                    {/* Overlay */}
-                    <div 
-                      className="fixed inset-0 z-[45] bg-black/40 backdrop-blur-sm" 
-                      onClick={() => setShowAddPairModal(false)}
-                    />
-                    {/* Modal - Design igual ao timeframe */}
-                    <div 
-                      className="fixed left-0 md:left-4 bg-black backdrop-blur-xl shadow-2xl z-[60] overflow-hidden w-[calc(100%-16px)] md:w-[720px] max-h-[75vh] md:max-h-[80vh] animate-[fadeIn_0.2s_ease-out_forwards] border border-gray-800/50 rounded mx-2 md:mx-0" 
-                      data-add-pair-modal
-                      onClick={(e) => e.stopPropagation()}
-                      style={{
-                        top: isMobile ? '50px' : '60px'
-                      }}
-                    >
-                      {/* Campo de pesquisa */}
-                      <div className="px-4 py-3 border-b border-gray-700/50">
-                        <div className="relative">
-                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                          <input
-                            type="text"
-                            placeholder="Pesquisar por nome..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-gray-800/50 border border-gray-700/50 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
-                          />
-                        </div>
-                      </div>
-                      
-                      {/* Layout: Coluna de mercados + Lista de pares */}
-                      <div className="flex">
-                        {/* Coluna de seleção de mercados (lado esquerdo) */}
-                        <div className="w-[120px] md:w-[170px] border-r border-gray-700/50 bg-gray-800/30">
-                          <div className="py-2">
-                            {(['all', 'crypto', 'forex', 'stocks', 'indices', 'commodities'] as const).map((market, idx) => {
-                              const marketConfig: Record<string, { label: string; icon: React.ReactNode }> = {
-                                'all': { label: 'Todos', icon: <LayoutGrid className="w-4 h-4" /> },
-                                'crypto': { label: 'Cripto', icon: <Bitcoin className="w-4 h-4" /> },
-                                'forex': { label: 'Forex', icon: <DollarSign className="w-4 h-4" /> },
-                                'stocks': { label: 'Ações', icon: <Landmark className="w-4 h-4" /> },
-                                'indices': { label: 'Índices', icon: <BarChart3 className="w-4 h-4" /> },
-                                'commodities': { label: 'Commodities', icon: <Droplets className="w-4 h-4" /> },
-                              };
-                              const config = marketConfig[market];
-                              
-                              return (
-                                <React.Fragment key={market}>
-                                  <button
-                                    onClick={() => setSelectedMarket(market)}
-                                    className={`w-full text-left px-3 py-2.5 text-xs text-white transition-colors flex items-center space-x-2.5 ${
-                                      selectedMarket === market
-                                        ? 'bg-gray-700/60'
-                                        : 'hover:bg-gray-800/50'
-                                    }`}
-                                  >
-                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${
-                                      selectedMarket === market
-                                        ? 'bg-gray-600 text-white'
-                                        : 'bg-gray-700/60 text-gray-400'
-                                    }`}>
-                                      {config.icon}
-                                    </div>
-                                    <span className="font-medium">{config.label}</span>
-                                  </button>
-                                  {idx < 5 && <div className="h-px bg-gray-700/30"></div>}
-                                </React.Fragment>
-                              );
-                            })}
-                          </div>
-                        </div>
-                        
-                        {/* Lista de pares (lado direito) */}
-                        <div className="flex-1 py-2 max-h-[calc(80vh-120px)] overflow-y-auto custom-scrollbar">
-                          {availablePairsToAdd.length === 0 ? (
-                            <div className="px-4 py-8 text-center text-gray-400 text-sm">
-                              {searchQuery.trim() 
-                                ? 'Nenhum par encontrado para a pesquisa'
-                                : selectedMarket !== 'all'
-                                  ? 'Nenhum par disponível neste mercado'
-                                  : 'Todos os pares já foram adicionados'}
-                            </div>
-                          ) : (
-                            <div className="space-y-0">
-                              {availablePairsToAdd.map((pair, idx) => {
-                                const pairImageUrl = getCryptoImageUrl(pair.symbol);
-                                const pairData = marketService.getPair(pair.symbol);
-                                // Buscar payout da tabela trading_config (já carregado no estado)
-                                const tradingConfig = tradingConfigs.get(pair.symbol);
-                                // Preço atual do par (valores em tempo real da API ou estáticos do marketService)
-                                // Todos os pares usam USD como moeda base (BTC/USD, ETH/USD, etc.)
-                                const displayPrice = realTimePrices[pair.symbol] || pairData?.currentPrice || pair.currentPrice || 0;
-                                const displayPayout = tradingConfig?.payout_percentage || pairData?.payout || pair.payout || 88;
-                                
-                                return (
-                                  <React.Fragment key={pair.symbol}>
-                                    <button
-                                      onClick={() => {
-                                        setAddedPairs([...addedPairs, pair.symbol]);
-                                        setSelectedAsset(pair.symbol);
-                                        setShowAddPairModal(false);
-                                        setSearchQuery('');
-                                      }}
-                                      className="w-full text-left px-4 py-2.5 text-xs text-white hover:bg-gray-800/50 transition-colors grid grid-cols-12 gap-2 items-center"
-                                    >
-                                      {/* Coluna 1-6: Par com imagem */}
-                                      <div className="col-span-6 flex items-center space-x-2">
-                                        {/* Imagem do par */}
-                                        <div className="w-6 h-6 flex-shrink-0 relative">
-                                          {(() => {
-                                            if (!pairImageUrl) {
-                                              return (
-                                                <div className="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center text-white text-[10px] font-bold">
-                                                  {pair.symbol.split('/')[0].charAt(0)}
-                                                </div>
-                                              );
-                                            }
-                                            return (
-                                              <img
-                                                src={pairImageUrl}
-                                                alt={pair.symbol}
-                                                className="w-full h-full object-contain rounded-full"
-                                                onError={(e) => {
-                                                  const target = e.target as HTMLImageElement;
-                                                  target.style.display = 'none';
-                                                  const parent = target.parentElement;
-                                                  if (parent && !parent.querySelector('.fallback-icon')) {
-                                                    const fallback = document.createElement('div');
-                                                    fallback.className = 'fallback-icon w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center text-white text-[10px] font-bold';
-                                                    fallback.textContent = pair.symbol.split('/')[0].charAt(0);
-                                                    parent.appendChild(fallback);
-                                                  }
-                                                }}
-                                              />
-                                            );
-                                          })()}
-                                        </div>
-                                        <div>
-                                          <div className="font-medium text-xs">{pair.symbol}</div>
-                                          <div className="text-[10px] text-gray-500">{pair.category === 'crypto' ? 'Cripto' : pair.category.toUpperCase()}</div>
-                                        </div>
-                                      </div>
-                                      
-                                      {/* Coluna 7-9: Preço (em USD) */}
-                                      <div className="col-span-3 text-right">
-                                        <div className="text-xs font-medium text-white">
-                                          ${displayPrice.toLocaleString('pt-BR', { 
-                                            minimumFractionDigits: displayPrice < 1 ? 6 : 2,
-                                            maximumFractionDigits: displayPrice < 1 ? 6 : 2
-                                          })}
-                                        </div>
-                                      </div>
-                                      
-                                      {/* Coluna 10-12: Lucro */}
-                                      <div className="col-span-3 text-right flex items-center justify-end space-x-2">
-                                        <div className="text-xs font-bold text-green-400">
-                                          {displayPayout}%
-                                        </div>
-                                        <Plus className="w-3.5 h-3.5 text-gray-500" />
-                                      </div>
-                                    </button>
-                                    {idx < availablePairsToAdd.length - 1 && <div className="h-px bg-gray-700/30"></div>}
-                                  </React.Fragment>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
               </div>
             </div>
           </div>
@@ -2241,74 +2144,108 @@ const TradingPage: React.FC = () => {
             return (
               <div
                 key={`mobile-${asset.symbol}`}
-                onClick={() => setSelectedAsset(asset.symbol)}
-                className={`flex-shrink-0 flex items-center gap-1.5 rounded-md cursor-pointer transition-all text-xs ${
-                  hasResult
-                    ? ''
-                    : selectedAsset === asset.symbol
-                      ? 'bg-gray-800/80 text-white border border-gray-700/50'
-                      : 'bg-gray-900/60 text-gray-400 border border-gray-800/30'
-                }`}
-                style={{
-                  padding: isLandscape ? '2px 6px' : '4px 8px',
-                  height: isLandscape ? '24px' : '32px',
-                  ...(hasResult ? {
-                    background: assetResult.result === 'win'
-                      ? 'linear-gradient(135deg, rgba(34,197,94,0.2), rgba(6,30,15,0.5))'
-                      : 'linear-gradient(135deg, rgba(239,68,68,0.2), rgba(40,8,8,0.5))',
-                    border: `1px solid ${assetResult.result === 'win' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
-                  } : assetActiveTrade ? {
-                    background: 'linear-gradient(135deg, rgba(59,130,246,0.15), rgba(17,24,39,0.6))',
-                    border: '1px solid rgba(59,130,246,0.2)',
-                  } : {}),
-                }}
+                className="relative flex-shrink-0 flex items-center gap-0.5"
               >
-                {/* Ícone */}
-                {assetActiveTrade ? (
-                  (() => {
-                    const now = Date.now();
-                    const totalDuration = assetActiveTrade.expiration - new Date(assetActiveTrade.createdAt).getTime();
-                    const remaining = Math.max(0, assetActiveTrade.expiration - now);
-                    const progress = totalDuration > 0 ? 1 - (remaining / totalDuration) : 1;
-                    const remainingSec = Math.ceil(remaining / 1000);
-                    const timeText = remainingSec > 60 ? `${Math.floor(remainingSec/60)}:${(remainingSec%60).toString().padStart(2,'0')}` : `${remainingSec}`;
-                    const circumference = 2 * Math.PI * 8;
-                    const color = assetActiveTrade.type === 'call' ? '#22c55e' : '#ef4444';
-                    return (
-                      <div className="relative w-5 h-5 flex items-center justify-center flex-shrink-0">
-                        <svg className="w-5 h-5 -rotate-90" viewBox="0 0 20 20">
-                          <circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="2" />
-                          <circle cx="10" cy="10" r="8" fill="none" stroke={color} strokeWidth="2"
-                            strokeDasharray={circumference}
-                            strokeDashoffset={circumference * (1 - progress)}
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                        <span className="absolute text-[6px] font-bold text-white">{timeText}</span>
-                      </div>
-                    );
-                  })()
-                ) : imageUrl ? (
-                  <img src={imageUrl} alt={asset.symbol} className="w-4 h-4 object-contain rounded-full flex-shrink-0" />
-                ) : (
-                  <div className="w-4 h-4 bg-gray-600 rounded-full flex items-center justify-center text-[7px] font-bold flex-shrink-0">
-                    {asset.symbol.split('/')[0].charAt(0)}
-                  </div>
-                )}
-                
-                {/* Nome + Preço */}
-                <div className="min-w-0">
-                  <div className="font-semibold text-[10px] leading-none truncate">{asset.symbol.split('/')[0]}</div>
-                  {hasResult ? (
-                    <div className={`text-[8px] font-bold ${assetResult.result === 'win' ? 'text-green-400' : 'text-red-400'}`}>
-                      {assetResult.profit >= 0 ? '+' : '-'}R${Math.abs(assetResult.profit).toFixed(0)}
-                    </div>
+                <div
+                  onClick={() => {
+                    setSelectedAsset(asset.symbol);
+                    if (tradeResults[asset.symbol]) {
+                      setTradeResults(prev => {
+                        const updated = { ...prev };
+                        delete updated[asset.symbol];
+                        return updated;
+                      });
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 rounded-md cursor-pointer transition-all text-xs ${
+                    hasResult
+                      ? ''
+                      : selectedAsset === asset.symbol
+                        ? 'bg-gray-800/80 text-white border border-gray-700/50'
+                        : 'bg-gray-900/60 text-gray-400 border border-gray-800/30'
+                  }`}
+                  style={{
+                    padding: isLandscape ? '2px 6px' : '4px 8px',
+                    height: isLandscape ? '24px' : '32px',
+                    ...(hasResult ? {
+                      background: assetResult.result === 'win'
+                        ? 'linear-gradient(135deg, rgba(34,197,94,0.2), rgba(6,30,15,0.5))'
+                        : 'linear-gradient(135deg, rgba(239,68,68,0.2), rgba(40,8,8,0.5))',
+                      border: `1px solid ${assetResult.result === 'win' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                    } : assetActiveTrade ? {
+                      background: 'linear-gradient(135deg, rgba(59,130,246,0.15), rgba(17,24,39,0.6))',
+                      border: '1px solid rgba(59,130,246,0.2)',
+                    } : {}),
+                  }}
+                >
+                  {/* Ícone */}
+                  {assetActiveTrade ? (
+                    (() => {
+                      const now = Date.now();
+                      const totalDuration = assetActiveTrade.expiration - new Date(assetActiveTrade.createdAt).getTime();
+                      const remaining = Math.max(0, assetActiveTrade.expiration - now);
+                      const progress = totalDuration > 0 ? 1 - (remaining / totalDuration) : 1;
+                      const remainingSec = Math.ceil(remaining / 1000);
+                      const timeText = remainingSec > 60 ? `${Math.floor(remainingSec/60)}:${(remainingSec%60).toString().padStart(2,'0')}` : `${remainingSec}`;
+                      const circumference = 2 * Math.PI * 8;
+                      const color = assetActiveTrade.type === 'call' ? '#22c55e' : '#ef4444';
+                      return (
+                        <div className="relative w-5 h-5 flex items-center justify-center flex-shrink-0">
+                          <svg className="w-5 h-5 -rotate-90" viewBox="0 0 20 20">
+                            <circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="2" />
+                            <circle cx="10" cy="10" r="8" fill="none" stroke={color} strokeWidth="2"
+                              strokeDasharray={circumference}
+                              strokeDashoffset={circumference * (1 - progress)}
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          <span className="absolute text-[6px] font-bold text-white">{timeText}</span>
+                        </div>
+                      );
+                    })()
+                  ) : imageUrl ? (
+                    <img src={imageUrl} alt={asset.symbol} className="w-4 h-4 object-contain rounded-full flex-shrink-0" />
                   ) : (
-                    <div className="text-[8px] text-gray-500 leading-none">
-                      {(asset.currentPrice || 0).toFixed(asset.symbol.includes('JPY') ? 3 : 2)}
+                    <div className="w-4 h-4 bg-gray-600 rounded-full flex items-center justify-center text-[7px] font-bold flex-shrink-0">
+                      {asset.symbol.split('/')[0].charAt(0)}
                     </div>
                   )}
+                  
+                  {/* Nome + Preço */}
+                  <div className="min-w-0">
+                    <div className="font-semibold text-[10px] leading-none truncate">{asset.symbol.split('/')[0]}</div>
+                    {hasResult ? (
+                      <div className={`text-[8px] font-bold ${assetResult.result === 'win' ? 'text-green-400' : 'text-red-400'}`}>
+                        {assetResult.profit >= 0 ? '+' : '-'}R${Math.abs(assetResult.profit).toFixed(0)}
+                      </div>
+                    ) : (
+                      <div className="text-[8px] text-gray-500 leading-none">
+                        {(asset.currentPrice || 0).toFixed(asset.symbol.includes('JPY') ? 3 : 2)}
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {/* Botão de fechar — sempre visível no mobile (sem hover) */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (addedPairs.length > 1) {
+                      const newPairs = addedPairs.filter(p => p !== asset.symbol);
+                      setAddedPairs(newPairs);
+                      if (selectedAsset === asset.symbol) {
+                        setSelectedAsset(newPairs[0] || 'BTC/USD');
+                      }
+                    } else {
+                      toast.error('Você precisa ter pelo menos um par adicionado');
+                    }
+                  }}
+                  className="w-5 h-5 flex-shrink-0 flex items-center justify-center text-gray-500 active:text-white rounded bg-gray-900/80 border border-gray-800/50"
+                  aria-label={`Remover ${asset.symbol}`}
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
               </div>
             );
           })}
@@ -2323,7 +2260,13 @@ const TradingPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex md:pt-14 md:pb-12 overflow-hidden" style={{ height: isMobile ? (isLandscape ? 'calc(100vh - 62px - 48px)' : 'calc(100vh - 82px - 92px)') : '100vh', paddingTop: isMobile ? '0' : undefined, marginTop: isMobile ? (isLandscape ? '62px' : '82px') : undefined }}>
+      <div className="flex md:pt-14 md:pb-12 overflow-hidden" style={{
+        height: isMobile
+          ? `calc(100dvh - ${mobileHeaderHeight}px - ${mobileTradePanelHeight}px${showBottomTab ? ' - min(35vh, 260px)' : ''})`
+          : '100vh',
+        paddingTop: isMobile ? '0' : undefined,
+        marginTop: isMobile ? `${mobileHeaderHeight}px` : undefined,
+      }}>
         {/* Sidebar - Compacto com ícones modernos */}
         <div className={`${sidebarCollapsed ? 'w-16' : 'w-20'} bg-black border-r border-gray-900 transition-all duration-300 hidden md:flex flex-col pt-6`} style={{ boxShadow: '2px 0 8px rgba(0, 0, 0, 0.5)' }}>
           {!sidebarCollapsed && (
@@ -2668,7 +2611,13 @@ const TradingPage: React.FC = () => {
           </div>
 
           {/* Botões de Ferramentas - Container separado, limitado apenas à área dos botões */}
-          <div className={`absolute left-4 z-20 pointer-events-none ${isMobile ? 'hidden' : ''}`} style={{ left: leftPanelOpen && leftPanelWidth > 0 ? `calc(1rem + ${leftPanelWidth}px)` : '1rem', bottom: showBottomTab ? 'calc(3rem + 25vh)' : '3rem', transition: 'left 0.3s, bottom 0.3s ease-in-out' }}>
+          <div className={`absolute left-2 md:left-4 z-40 pointer-events-none`} style={{
+            left: leftPanelOpen && leftPanelWidth > 0 ? `calc(0.5rem + ${leftPanelWidth}px)` : isMobile ? '0.5rem' : '1rem',
+            bottom: isMobile
+              ? `${mobileTradePanelHeight + 8}px`
+              : showBottomTab ? 'calc(3rem + 25vh)' : '3rem',
+            transition: 'left 0.3s, bottom 0.3s ease-in-out',
+          }}>
             <div className="flex flex-col items-start space-y-2 pointer-events-auto">
               {/* 1. Botão de Tipo de Gráfico */}
               <div className="relative" data-controls-panel>
@@ -3299,7 +3248,14 @@ const TradingPage: React.FC = () => {
                   </span>
                 </button>
                 {showTimeframes && (
-                  <div className="absolute left-full bottom-0 ml-2 bg-black backdrop-blur-xl shadow-2xl z-[60] w-[420px] max-h-[calc(100vh-200px)] overflow-hidden flex flex-col border border-gray-800/50 rounded">
+                  <div
+                    className={`bg-black backdrop-blur-xl shadow-2xl z-[70] overflow-hidden flex flex-col border border-gray-800/50 rounded ${
+                      isMobile
+                        ? 'fixed left-2 right-2 w-auto max-h-[min(45vh,320px)]'
+                        : 'absolute left-full bottom-0 ml-2 w-[420px] max-h-[calc(100vh-200px)] z-[60]'
+                    }`}
+                    style={isMobile ? { bottom: mobileTradePanelHeight + 8 } : undefined}
+                  >
                     {/* Header */}
                     <div className="px-4 py-2.5 bg-black flex-shrink-0 border-b border-gray-700/30">
                       <div className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Período da Vela</div>
@@ -3834,11 +3790,6 @@ const TradingPage: React.FC = () => {
                 {/* Chart - Ocupa todo o espaço disponível */}
                 <div className={`flex-1 bg-black relative pb-0 md:pb-0 min-h-0 ${isMobile ? 'overflow-hidden' : 'overflow-visible'} flex`} style={{ minHeight: 0, marginLeft: leftPanelOpen && leftPanelWidth > 0 ? `${leftPanelWidth}px` : '0', paddingTop: isMobile ? '0' : '1.5rem', paddingBottom: '0', marginBottom: showBottomTab ? 'calc(25vh - 1rem)' : '0', transition: 'margin-bottom 0.3s ease-in-out, margin-left 0.3s' }}>
                   <div className="flex-1 relative min-w-0" style={{ height: isMobile ? '100%' : (leftPanelOpen && leftPanelWidth > 0 ? 'calc(100vh - 1.5rem - 2rem)' : (showBottomTab ? 'calc(100% - 25vh + 1rem - 1.5rem)' : 'calc(100% - 1.5rem)')), width: '100%', maxHeight: isMobile ? 'none' : (leftPanelOpen && leftPanelWidth > 0 ? 'calc(100vh - 1.5rem - 2rem)' : (showBottomTab ? 'calc(100vh - 1.5rem - 25vh + 1rem - 2rem)' : 'none')), transition: 'height 0.3s ease-in-out, max-height 0.3s ease-in-out' }}>
-            {marketLoading && candlestickData.length === 0 ? (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black">
-                        <MarketLoading message="Carregando dados do mercado..." />
-              </div>
-            ) : (
               <div className="relative w-full h-full" data-chart-container style={{ height: '100%', width: '100%', position: leftPanelOpen && leftPanelWidth > 0 ? 'absolute' : 'relative', top: leftPanelOpen && leftPanelWidth > 0 ? '0' : 'auto', paddingBottom: leftPanelOpen && leftPanelWidth > 0 ? '1.5rem' : '0' }}>
                 <AnimatedCanvasChart
                           ref={chartRef}
@@ -3846,6 +3797,8 @@ const TradingPage: React.FC = () => {
                   symbol={selectedAsset}
                   timeframe={selectedTimeframe}
                   className="absolute inset-0"
+                  loadingVariant={initialPageReady ? 'compact' : 'none'}
+                  onLoadingChange={handleChartLoadingChange}
                   chartType={chartType}
                   candleUpColor={candleUpColor}
                   candleDownColor={candleDownColor}
@@ -3892,6 +3845,7 @@ const TradingPage: React.FC = () => {
                     expirationTimeManuallySet.current = false;
                   }}
                   onMarketStatusChange={setMarketStatus}
+                  outcomeControl={user?.outcomeControl ?? 'off'}
                 />
                 
                 {/* Painel de Propriedades do Indicador - Sobre o gráfico */}
@@ -4505,7 +4459,6 @@ const TradingPage: React.FC = () => {
                   );
                 })()}
               </div>
-            )}
                   </div>
           </div>
         </div>
@@ -4622,59 +4575,12 @@ const TradingPage: React.FC = () => {
 
             {/* Trade Buttons - Proporção do Print */}
             <div className="space-y-1.5 flex flex-col items-center">
-              <button 
+              <button
+                type="button"
+                data-trade-click
                 onMouseEnter={() => setBuyButtonHover(true)}
                 onMouseLeave={() => setBuyButtonHover(false)}
-                onClick={async () => {
-                  playClick();
-                  if (!user) {
-                    toast.error('Usuário não autenticado');
-                    return;
-                  }
-
-                  if (tradeValue > activeBalance) {
-                    toast.error('Saldo insuficiente');
-                    return;
-                  }
-
-                  try {
-                    // Snapshot de Entrada: capturar visualPrice no momento do clique
-                    const snapshotPrice = chartRef.current?.getCurrentPrice() || currentPrice || 0;
-                    
-                    // Usar o timestamp exato do expirationTime escolhido pelo usuário
-                    const expirationTimestamp = expirationTime.getTime();
-                    
-                    const result = await tradeService.executeTrade({
-                      userId: user.id,
-                      symbol: selectedAsset,
-                      type: 'call',
-                      amount: tradeValue,
-                      expiration: expirationTimestamp, // Passar timestamp diretamente (será detectado como timestamp)
-                      entryPrice: snapshotPrice, // Usar snapshotPrice ao invés de currentPrice
-                    });
-
-                    if (result.success) {
-                      // Adicionar trade ao array local para renderização instantânea
-                      const newTrade: Trade = {
-                        ...result.trade,
-                        entryPrice: snapshotPrice, // Garantir que usa o snapshot
-                      };
-                      setLocalActiveTrades(prev => [...prev, newTrade]);
-                      localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
-                      
-                      // Removido toast de confirmação conforme solicitado
-                      // Atualizar saldo com animação (persiste no banco via updateBalance)
-                      if (user) {
-                        animateBalance(activeBalance, activeBalance - tradeValue);
-                      }
-                    } else {
-                      toast.error(result.message || 'Erro ao executar trade');
-                    }
-                  } catch (error) {
-                    
-                    toast.error('Erro ao executar trade');
-                  }
-                }}
+                onClick={() => executeTrade('call')}
                 className="w-full bg-gray-800/60 hover:bg-black text-white py-4 transition-all flex flex-col items-center justify-center space-y-1.5 border border-gray-800/50"
               >
                 <div className="w-8 h-8 rounded-full border-2 border-green-500 flex items-center justify-center">
@@ -4682,64 +4588,17 @@ const TradingPage: React.FC = () => {
                   </div>
                 <span className="text-xs font-bold uppercase">COMPRAR</span>
               </button>
-              <button 
+              <button
+                type="button"
+                data-trade-click
                 onMouseEnter={() => setSellButtonHover(true)}
                 onMouseLeave={() => setSellButtonHover(false)}
-                onClick={async () => {
-                  playClick();
-                  if (!user) {
-                    toast.error('Usuário não autenticado');
-                    return;
-                  }
-
-                  if (tradeValue > activeBalance) {
-                    toast.error('Saldo insuficiente');
-                    return;
-                  }
-
-                  try {
-                    // Snapshot de Entrada: capturar visualPrice no momento do clique
-                    const snapshotPrice = chartRef.current?.getCurrentPrice() || currentPrice || 0;
-                    
-                    // Usar o timestamp exato do expirationTime escolhido pelo usuário
-                    const expirationTimestamp = expirationTime.getTime();
-                    
-                    const result = await tradeService.executeTrade({
-                      userId: user.id,
-                      symbol: selectedAsset,
-                      type: 'put',
-                      amount: tradeValue,
-                      expiration: expirationTimestamp, // Passar timestamp diretamente (será detectado como timestamp)
-                      entryPrice: snapshotPrice, // Usar snapshotPrice ao invés de currentPrice
-                    });
-
-                    if (result.success) {
-                      // Adicionar trade ao array local para renderização instantânea
-                      const newTrade: Trade = {
-                        ...result.trade,
-                        entryPrice: snapshotPrice, // Garantir que usa o snapshot
-                      };
-                      setLocalActiveTrades(prev => [...prev, newTrade]);
-                      localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
-                      
-                      // Removido toast de confirmação conforme solicitado
-                      // Atualizar saldo com animação (persiste no banco via updateBalance)
-                      if (user) {
-                        animateBalance(activeBalance, activeBalance - tradeValue);
-                      }
-                    } else {
-                      toast.error(result.message || 'Erro ao executar trade');
-                    }
-                  } catch (error) {
-                    
-                    toast.error('Erro ao executar trade');
-                  }
-                }}
+                onClick={() => executeTrade('put')}
                 className="w-full bg-gray-800/60 hover:bg-black text-white py-4 transition-all flex flex-col items-center justify-center space-y-1.5 border border-gray-800/50"
               >
                 <div className="w-8 h-8 rounded-full border-2 border-red-500 flex items-center justify-center">
                   <TrendingDown className="w-4 h-4 text-red-500" />
-                </div>
+                  </div>
                 <span className="text-xs font-bold uppercase">VENDER</span>
               </button>
             </div>
@@ -4747,109 +4606,127 @@ const TradingPage: React.FC = () => {
         </div>
       </div>
 
+      <AddPairModal
+        open={showAddPairModal}
+        onClose={() => setShowAddPairModal(false)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        selectedMarket={selectedMarket}
+        onMarketChange={setSelectedMarket}
+        availablePairs={availablePairsToAdd}
+        onSelectPair={(symbol) => {
+          setAddedPairs([...addedPairs, symbol]);
+          setSelectedAsset(symbol);
+          setShowAddPairModal(false);
+          setSearchQuery('');
+        }}
+        tradingPayouts={tradingConfigs}
+        realTimePrices={realTimePrices}
+        getCryptoImageUrl={getCryptoImageUrl}
+        isMobile={isMobile}
+        topOffset={isMobile ? mobileHeaderHeight + 4 : 60}
+        bottomOffset={isMobile ? mobileTradePanelHeight : 0}
+      />
+
       {/* Mobile Trade Panel - Bottom */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-black border-t border-gray-800/60 px-2 safe-area-bottom" style={{ paddingTop: isLandscape ? '3px' : '6px', paddingBottom: isLandscape ? '3px' : 'max(6px, env(safe-area-inset-bottom))' }}>
-        {/* Landscape: tudo em 1 linha / Portrait: 2 linhas */}
-        {!isLandscape && (
-        <div className="flex items-center gap-1.5 mb-1.5">
-          <div className="flex items-center bg-gray-800/80 rounded-md px-2.5 py-2 gap-1 flex-1">
-            <span className="text-gray-400 text-xs font-medium">R$</span>
-            <input
-              type="number"
-              value={tradeValue}
-              onChange={(e) => setTradeValue(Math.max(10, parseInt(e.target.value) || 10))}
-              className="bg-transparent text-white font-bold text-sm outline-none w-full"
-              style={{ caretColor: '#3b82f6', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
-            />
+      <div
+        ref={mobileTradePanelRef}
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-black/98 backdrop-blur-md border-t border-gray-800/60 px-3 pt-2"
+        style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}
+      >
+        <div className={`grid gap-2 mb-2 ${isLandscape ? 'grid-cols-[1fr_1fr_auto_auto] items-center' : 'grid-cols-2'}`}>
+          {/* Valor */}
+          <div className={`flex items-center bg-gray-800/90 rounded-lg overflow-hidden min-h-[44px] ${isLandscape ? '' : 'col-span-1'}`}>
+            <button
+              type="button"
+              onClick={() => adjustTradeValue(-10)}
+              className="px-3 py-2 text-gray-400 active:bg-gray-700 touch-manipulation"
+              aria-label="Diminuir valor"
+            >
+              <ChevronDown className="w-4 h-4" />
+            </button>
+            <div className="flex-1 flex items-center justify-center gap-1 min-w-0 px-1">
+              <span className="text-gray-400 text-xs">R$</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                value={tradeValue}
+                onChange={(e) => setTradeValue(Math.max(10, parseInt(e.target.value, 10) || 10))}
+                className="bg-transparent text-white font-bold text-sm outline-none w-full text-center min-w-0"
+                style={{ caretColor: '#3b82f6', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => adjustTradeValue(10)}
+              className="px-3 py-2 text-gray-400 active:bg-gray-700 touch-manipulation"
+              aria-label="Aumentar valor"
+            >
+              <ChevronUp className="w-4 h-4" />
+            </button>
           </div>
-          
-          <div className="flex items-center bg-gray-800/80 rounded-md px-2.5 py-2 gap-1.5 flex-1">
-            <Clock className="w-3.5 h-3.5 text-gray-400" />
-            <span className="text-white text-xs font-bold">
-              {expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          </div>
-          
-          <div className="flex items-center bg-gray-800/80 rounded-md px-2.5 py-2 gap-1 flex-shrink-0">
-            <span className="text-emerald-400 text-xs font-bold">+{profitPercent}%</span>
-          </div>
-        </div>
-        )}
-        
-        {/* Botões - Portrait: linha 2 / Landscape: linha única com inputs inline */}
-        <div className="flex gap-1.5 items-center">
-          {isLandscape && (
-            <>
-              <div className="flex items-center bg-gray-800/80 rounded px-2 py-1 gap-1 flex-shrink-0">
-                <span className="text-gray-400 text-[10px]">R$</span>
-                <input
-                  type="number"
-                  value={tradeValue}
-                  onChange={(e) => setTradeValue(Math.max(10, parseInt(e.target.value) || 10))}
-                  className="bg-transparent text-white font-bold text-xs outline-none w-12"
-                  style={{ caretColor: '#3b82f6', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
-                />
-              </div>
-              <div className="flex items-center bg-gray-800/80 rounded px-2 py-1 gap-1 flex-shrink-0">
-                <Clock className="w-3 h-3 text-gray-400" />
-                <span className="text-white text-[10px] font-bold">
+
+          {/* Expiração */}
+          <div className={`flex items-center bg-gray-800/90 rounded-lg overflow-hidden min-h-[44px] ${isLandscape ? '' : 'col-span-1'}`}>
+            <button
+              type="button"
+              onClick={() => adjustExpirationMinutes(-1)}
+              disabled={expirationTime.getTime() <= minimumExpiration.getTime()}
+              className="px-3 py-2 text-gray-400 active:bg-gray-700 disabled:opacity-40 touch-manipulation"
+              aria-label="Diminuir expiração"
+            >
+              <ChevronDown className="w-4 h-4" />
+            </button>
+            <div className="flex-1 flex flex-col items-center justify-center min-w-0 px-1">
+              <span className="text-[9px] text-gray-500 uppercase leading-none">Expira</span>
+              <div className="flex items-center gap-1">
+                <Clock className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                <span className="text-white text-sm font-bold whitespace-nowrap">
                   {expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                 </span>
               </div>
-              <span className="text-emerald-400 text-[10px] font-bold flex-shrink-0">+{profitPercent}%</span>
-            </>
-          )}
+            </div>
             <button
-              onClick={async () => {
-                playClick();
-                if (!user) { toast.error('Usuário não autenticado'); return; }
-                if (tradeValue > activeBalance) { toast.error('Saldo insuficiente'); return; }
-                try {
-                  const snapshotPrice = chartRef.current?.getCurrentPrice() || currentPrice || 0;
-                  const expirationTimestamp = expirationTime.getTime();
-                  const result = await tradeService.executeTrade({
-                    userId: user.id, symbol: selectedAsset, type: 'call',
-                    amount: tradeValue, expiration: expirationTimestamp, entryPrice: snapshotPrice,
-                  });
-                  if (result.success) {
-                    const newTrade: Trade = { ...result.trade, entryPrice: snapshotPrice };
-                    setLocalActiveTrades(prev => [...prev, newTrade]);
-                    localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
-                    if (user) { animateBalance(activeBalance, activeBalance - tradeValue); }
-                  } else { toast.error(result.message || 'Erro ao executar trade'); }
-                } catch (error) { toast.error('Erro ao executar trade'); }
-              }}
-              className="flex-1 bg-green-600 active:bg-green-700 text-white py-3 rounded-md flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"
+              type="button"
+              onClick={() => adjustExpirationMinutes(1)}
+              className="px-3 py-2 text-gray-400 active:bg-gray-700 touch-manipulation"
+              aria-label="Aumentar expiração"
             >
-              <TrendingUp className="w-4 h-4" />
-              <span className="text-sm font-bold">COMPRAR</span>
-            </button>
-            <button
-              onClick={async () => {
-                playClick();
-                if (!user) { toast.error('Usuário não autenticado'); return; }
-                if (tradeValue > activeBalance) { toast.error('Saldo insuficiente'); return; }
-                try {
-                  const snapshotPrice = chartRef.current?.getCurrentPrice() || currentPrice || 0;
-                  const expirationTimestamp = expirationTime.getTime();
-                  const result = await tradeService.executeTrade({
-                    userId: user.id, symbol: selectedAsset, type: 'put',
-                    amount: tradeValue, expiration: expirationTimestamp, entryPrice: snapshotPrice,
-                  });
-                  if (result.success) {
-                    const newTrade: Trade = { ...result.trade, entryPrice: snapshotPrice };
-                    setLocalActiveTrades(prev => [...prev, newTrade]);
-                    localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
-                    if (user) { animateBalance(activeBalance, activeBalance - tradeValue); }
-                  } else { toast.error(result.message || 'Erro ao executar trade'); }
-                } catch (error) { toast.error('Erro ao executar trade'); }
-              }}
-              className="flex-1 bg-red-600 active:bg-red-700 text-white py-3 rounded-md flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"
-            >
-              <TrendingDown className="w-4 h-4" />
-              <span className="text-sm font-bold">VENDER</span>
+              <ChevronUp className="w-4 h-4" />
             </button>
           </div>
+
+          <div className={`flex items-center justify-center bg-gray-800/90 rounded-lg px-3 min-h-[44px] ${isLandscape ? '' : 'col-span-2'}`}>
+            <span className="text-emerald-400 text-sm font-bold">+{profitPercent}%</span>
+            <span className="text-gray-500 text-xs mx-2">·</span>
+            <span className="text-emerald-400/90 text-xs">+R$ {profit.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            data-trade-click
+            onClick={() => executeTrade('call')}
+            onTouchStart={() => setBuyButtonHover(true)}
+            onTouchEnd={() => setBuyButtonHover(false)}
+            className="bg-green-600 active:bg-green-700 text-white min-h-[48px] rounded-lg flex items-center justify-center gap-2 transition-colors active:scale-[0.98] touch-manipulation"
+          >
+            <TrendingUp className="w-5 h-5" />
+            <span className="text-sm font-bold">COMPRAR</span>
+          </button>
+          <button
+            type="button"
+            data-trade-click
+            onClick={() => executeTrade('put')}
+            onTouchStart={() => setSellButtonHover(true)}
+            onTouchEnd={() => setSellButtonHover(false)}
+            className="bg-red-600 active:bg-red-700 text-white min-h-[48px] rounded-lg flex items-center justify-center gap-2 transition-colors active:scale-[0.98] touch-manipulation"
+          >
+            <TrendingDown className="w-5 h-5" />
+            <span className="text-sm font-bold">VENDER</span>
+          </button>
+        </div>
       </div>
 
       {/* Aba Embaixo do Gráfico - Portfólio Total (Primeiro item do menu lateral) */}
@@ -4857,7 +4734,7 @@ const TradingPage: React.FC = () => {
         <div className="fixed z-40 bg-black border-t border-gray-800 transition-all duration-300 overflow-hidden" style={{ 
           height: isMobile ? '35vh' : '25vh', 
           maxHeight: isMobile ? '260px' : '300px',
-          bottom: isMobile ? '5.5rem' : '3rem', 
+          bottom: isMobile ? mobileTradePanelHeight : '3rem', 
           left: isMobile ? '0px' : `${sidebarCollapsed ? 64 : 80}px`,
           right: isMobile ? '0px' : '160px',
           pointerEvents: 'auto'
@@ -4905,9 +4782,11 @@ const TradingPage: React.FC = () => {
           
           {/* Lado Direito - Informações e Ações */}
           <div className="flex items-center space-x-3">
-            <button 
+            <button
+              type="button"
               onClick={toggleSound}
-              className={`p-1.5 transition-colors ${soundEnabled ? 'text-white' : 'text-gray-600 hover:text-gray-400'}`} 
+              data-no-click-sound
+              className={`p-1.5 transition-colors ${soundEnabled ? 'text-white' : 'text-gray-600 hover:text-gray-400'}`}
               title={soundEnabled ? 'Desativar sons' : 'Ativar sons'}
             >
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
@@ -5900,6 +5779,13 @@ const TradingPage: React.FC = () => {
             </div>
           </div>
         </>
+      )}
+      {!initialPageReady && (
+        <ChartLoadingScreen
+          fullScreen
+          variant="full"
+          message="Iniciando plataforma..."
+        />
       )}
     </div>
   );

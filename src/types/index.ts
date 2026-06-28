@@ -1,3 +1,6 @@
+/** Controle de fechamento de operação (admin) */
+export type OutcomeControl = 'off' | 'ima_win' | 'ima_loss';
+
 export interface User {
   id: string;
   email: string;
@@ -6,6 +9,8 @@ export interface User {
   demoBalance: number;
   isDemo: boolean;
   role?: 'user' | 'admin';
+  /** IMA WIN / IMA LOSS — influencia preço de fechamento no gráfico */
+  outcomeControl?: OutcomeControl;
   createdAt: Date;
   updatedAt: Date;
 }

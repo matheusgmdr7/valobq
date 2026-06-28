@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import {
   LayoutDashboard, DollarSign, CreditCard, Users, BarChart3, Settings,
-  Megaphone, Trophy, Newspaper, Calendar, MessageSquare, Activity, Building2
+  Megaphone, Trophy, Newspaper, Calendar, MessageSquare, Activity, Building2, Crosshair
 } from 'lucide-react';
 
 interface MenuItem {
@@ -60,6 +60,7 @@ export const AdminSidebar: React.FC = () => {
     { id: 'finance', title: 'Financeiro', icon: DollarSign, path: '/admin/finance', section: 'finance' },
     { id: 'payment-gateways', title: 'Gateways', icon: CreditCard, path: '/admin/payment-gateways', section: 'finance' },
     { id: 'trading-monitor', title: 'Monitor', icon: Activity, path: '/admin/trading-monitor', section: 'trading' },
+    { id: 'ima-results', title: 'IMA Resultados', icon: Crosshair, path: '/admin/ima-results', section: 'trading' },
     { id: 'trading-config', title: 'Configuração', icon: Settings, path: '/admin/trading-config', section: 'trading' },
     { id: 'chats', title: 'Suporte', icon: MessageSquare, path: '/admin/chats', section: 'content' },
     { id: 'promotions', title: 'Promoções', icon: Megaphone, path: '/admin/promotions', section: 'content' },

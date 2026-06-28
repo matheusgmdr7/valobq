@@ -80,7 +80,50 @@ export class TradeService {
   }
 
   /**
-   * Calcula resultado de um trade baseado no preço de saída
+   * Persiste resultado já calculado (gráfico é a fonte de verdade).
+   */
+  async persistTradeResult(
+    tradeId: string,
+    exitPrice: number,
+    result: 'win' | 'loss' | null,
+    profit: number,
+  ): Promise<TradeResult> {
+    try {
+      const trade = await db.getTradeById(tradeId);
+      if (!trade) {
+        return { trade: {} as Trade, success: false, message: 'Trade não encontrado' };
+      }
+      if (trade.result) {
+        return { trade, success: true, message: 'Já liquidado' };
+      }
+
+      const updatedTrade: Trade = {
+        ...trade,
+        exitPrice,
+        result: result ?? undefined,
+        profit,
+        updatedAt: Date.now(),
+      };
+
+      await db.updateTrade(tradeId, {
+        exitPrice,
+        result: result ?? undefined,
+        profit,
+      });
+
+      return { trade: updatedTrade, success: true };
+    } catch (error) {
+      logger.error('❌ [TradeService] Erro ao persistir resultado:', error);
+      return {
+        trade: {} as Trade,
+        success: false,
+        message: error instanceof Error ? error.message : 'Erro desconhecido',
+      };
+    }
+  }
+
+  /**
+   * @deprecated Use persistTradeResult — cálculo feito no cliente via settleTrade()
    */
   async calculateTradeResult(tradeId: string, exitPrice: number): Promise<TradeResult> {
     try {

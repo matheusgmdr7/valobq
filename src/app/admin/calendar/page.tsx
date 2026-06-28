@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Edit, Trash2, X, Save, Search, Globe, RefreshCw } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getEconomicCalendar, EconomicEvent, getCountryFlag } from '@/services/economicCalendarService';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 export default function CalendarAdminPage() {
   const [events, setEvents] = useState<EconomicEvent[]>([]);

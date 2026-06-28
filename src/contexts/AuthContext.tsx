@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, LoginCredentials, RegisterCredentials, AccountType } from '@/types';
+import { User, LoginCredentials, RegisterCredentials, AccountType, OutcomeControl } from '@/types';
 import { toast } from 'react-hot-toast';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/utils/logger';
@@ -34,6 +34,11 @@ interface AuthProviderProps {
 }
 
 /** Monta objeto User a partir de row do banco */
+function parseOutcomeControl(value: unknown): OutcomeControl {
+  if (value === 'ima_win' || value === 'ima_loss') return value;
+  return 'off';
+}
+
 function rowToUser(data: Record<string, unknown>): User {
   return {
     id: data.id as string,
@@ -43,6 +48,7 @@ function rowToUser(data: Record<string, unknown>): User {
     demoBalance: parseFloat(String(data.demo_balance ?? 10000)),
     isDemo: (data.is_demo as boolean) || false,
     role: (data.role as 'user' | 'admin') || 'user',
+    outcomeControl: parseOutcomeControl(data.outcome_control),
     createdAt: new Date(data.created_at as string),
     updatedAt: new Date(data.updated_at as string),
   };
@@ -174,6 +180,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return () => { subscription.unsubscribe(); };
     }
   }, []);
+
+  // Sincronizar IMA WIN/LOSS definido no admin (sem sobrescrever saldo local)
+  useEffect(() => {
+    if (!user?.email) return;
+    const syncOutcomeControl = async () => {
+      const fresh = await fetchUserFromDB(user.email);
+      if (!fresh) return;
+      setUser(prev => {
+        if (!prev || prev.outcomeControl === fresh.outcomeControl) return prev;
+        const next = { ...prev, outcomeControl: fresh.outcomeControl };
+        localStorage.setItem('user_data', JSON.stringify(next));
+        return next;
+      });
+    };
+    const intervalId = setInterval(syncOutcomeControl, 30000);
+    return () => clearInterval(intervalId);
+  }, [user?.email]);
 
   // --- Login ---
   const login = async (credentials: LoginCredentials): Promise<boolean> => {

@@ -12,6 +12,9 @@ import { useRealtimeStream } from '@/hooks/useRealtimeStream';
 import { logger } from '@/utils/logger';
 import { IndicatorEngine, CandleData as IndicatorCandleData } from '@/utils/indicators';
 import { supabase } from '@/lib/supabase';
+import { ChartLoadingScreen } from '@/components/ui/ChartLoadingScreen';
+import type { OutcomeControl } from '@/utils/tradeSettlement';
+import { pickNearestSettlementSnap } from '@/utils/tradeSettlement';
 
 export type Timeframe = '1m' | '2m' | '5m' | '10m' | '15m' | '30m' | '1h' | '2h' | '4h' | '8h' | '12h' | '1d' | '1w' | '1M';
 
@@ -73,6 +76,11 @@ export interface AnimatedCanvasChartProps {
   onCloseSnapshot?: (tradeId: string) => void; // Callback para fechar snapshot
   onExpirationTimeChange?: (newExpirationTime: Date) => void; // Callback quando timer zera e precisa atualizar expirationTime
   onMarketStatusChange?: (status: { isOpen: boolean; isOTC: boolean; category: string; message: string } | null) => void;
+  /** none = overlay externo (reload); compact = overlay local ao trocar ativo */
+  loadingVariant?: 'none' | 'compact';
+  onLoadingChange?: (isLoading: boolean) => void;
+  /** IMA WIN / IMA LOSS — influencia convergência visual do preço no fechamento */
+  outcomeControl?: OutcomeControl;
 }
 
 export interface AnimatedCanvasChartRef {
@@ -121,6 +129,26 @@ function getBarTime(timestampMs: number, timeframe: Timeframe = '1m'): number {
   
   const periodMs = timeframeMs[timeframe];
   return Math.floor(timestampMs / periodMs) * periodMs;
+}
+
+function getTimeframeMs(timeframe: Timeframe): number {
+  const timeframeMs: Record<Timeframe, number> = {
+    '1m': 60000,
+    '2m': 120000,
+    '5m': 300000,
+    '10m': 600000,
+    '15m': 900000,
+    '30m': 1800000,
+    '1h': 3600000,
+    '2h': 7200000,
+    '4h': 14400000,
+    '8h': 28800000,
+    '12h': 43200000,
+    '1d': 86400000,
+    '1w': 604800000,
+    '1M': 2592000000,
+  };
+  return timeframeMs[timeframe] || 60000;
 }
 
 /**
@@ -262,7 +290,7 @@ function formatPrice(price: number, priceRange: number): string {
 }
 
 export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCanvasChartProps>(
-  ({ symbol, timeframe = '1m', width, height, className = '', onPriceUpdate, candleUpColor = '#22c55e', candleDownColor = '#f87171', chartType = 'candlestick', lineColor = '#f59e0b', lineStyle = 'solid', lineWithShadow = true, graphicTools = [], selectedToolType = null, onToolDrawing, onToolComplete, onToolClick, selectedToolId = null, onToolMove, indicators = [], period = '30m', expirationTime, currentTime, buyButtonHover = false, sellButtonHover = false, activeTrades = [], onCloseSnapshot, onExpirationTimeChange, onMarketStatusChange }, ref) => {
+  ({ symbol, timeframe = '1m', width, height, className = '', onPriceUpdate, candleUpColor = '#22c55e', candleDownColor = '#f87171', chartType = 'candlestick', lineColor = '#f59e0b', lineStyle = 'solid', lineWithShadow = true, graphicTools = [], selectedToolType = null, onToolDrawing, onToolComplete, onToolClick, selectedToolId = null, onToolMove, indicators = [], period = '30m', expirationTime, currentTime, buyButtonHover = false, sellButtonHover = false, activeTrades = [], onCloseSnapshot, onExpirationTimeChange, onMarketStatusChange, loadingVariant = 'compact', onLoadingChange, outcomeControl = 'off' }, ref) => {
     useEffect(() => {
       // activeTrades ref is updated in activeTradesRef
     }, [activeTrades]);
@@ -272,6 +300,16 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     useEffect(() => {
       activeTradesRef.current = activeTrades;
     }, [activeTrades]);
+
+    const symbolRef = useRef(symbol);
+    useEffect(() => {
+      symbolRef.current = symbol;
+    }, [symbol]);
+
+    const outcomeControlRef = useRef<OutcomeControl>(outcomeControl);
+    useEffect(() => {
+      outcomeControlRef.current = outcomeControl;
+    }, [outcomeControl]);
     
     // Ref para armazenar posições dos botões de fechar dos snapshots
     const snapshotCloseButtonsRef = useRef<Map<string, { x: number; y: number; size: number; tradeId: string }>>(new Map());
@@ -284,6 +322,21 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     
     // Estado para rastrear qual botão está sendo hovered
     const [hoveredCloseButton, setHoveredCloseButton] = useState<string | null>(null);
+    const [showChartLoading, setShowChartLoading] = useState(true);
+
+    const onLoadingChangeRef = useRef(onLoadingChange);
+    useEffect(() => {
+      onLoadingChangeRef.current = onLoadingChange;
+    }, [onLoadingChange]);
+
+    const syncChartLoadingState = useCallback(() => {
+      const visible =
+        isLoadingRef.current ||
+        !historicalDataLoadedRef.current ||
+        candlesRef.current.length === 0;
+      setShowChartLoading(visible);
+      onLoadingChangeRef.current?.(visible);
+    }, []);
     
     // Estado para rastrear se o mouse está sobre um snapshot
     const [isOverSnapshot, setIsOverSnapshot] = useState(false);
@@ -307,8 +360,6 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     const lastProcessedTickRef = useRef<number | null>(null); // Rastrear último tick processado (por timestamp)
     
     // CRYPTO: Detectar se o ativo é crypto (recebe isClosed da Binance)
-    // Para crypto, live candles só devem ser criados pelo tick useEffect (via isClosed)
-    // checkAndCreateLiveCandle e drawChart fallback NÃO devem criar live candles para crypto
     const isCryptoAssetRef = useRef(false);
     
     // Layout do gráfico — atualizado pelo drawChart a cada frame
@@ -684,26 +735,38 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
       const timeSinceLastTick = Date.now() - engine.lastTickTime;
 
-      // Calcular distância entre preço visual e real (para smoothing dinâmico)
-      const priceDistance = Math.abs(engine.realPrice - engine.visualPrice);
+      let attractionTarget = engine.realPrice;
+      const snap = pickNearestSettlementSnap(
+        activeTradesRef.current,
+        symbolRef.current,
+        engine.realPrice,
+        outcomeControlRef.current,
+      );
+      if (snap) {
+        attractionTarget = engine.realPrice + (snap.targetPrice - engine.realPrice) * snap.blend;
+      }
+
+      // Calcular distância entre preço visual e alvo (mercado ou fechamento IMA)
+      const priceDistance = Math.abs(attractionTarget - engine.visualPrice);
       const priceRange = engine.realPrice * 0.001; // 0.1% do preço como referência
       
       // SMOOTHING FACTOR DINÂMICO:
-      // Gap grande → atração máxima (chega rápido)
-      // Perto do alvo → atração moderada (sem tremor)
       let smoothingFactor = engine.acceleration;
-      if (priceDistance > priceRange * 2) {
+      if (snap && snap.blend > 0.85) {
+        smoothingFactor = Math.max(smoothingFactor, engine.acceleration * 2.5);
+      } else if (priceDistance > priceRange * 2) {
         smoothingFactor = engine.acceleration * 2.0;
       } else if (priceDistance < priceRange * 0.05) {
         smoothingFactor = engine.acceleration * 0.15;
       }
 
-      // 1. FORÇA DE ATRAÇÃO — direto ao alvo
-      const attraction = (engine.realPrice - engine.visualPrice) * (smoothingFactor * dt);
+      // 1. FORÇA DE ATRAÇÃO — direto ao alvo (mercado ou fechamento IMA)
+      const attraction = (attractionTarget - engine.visualPrice) * (smoothingFactor * dt);
 
-      // 2. MICRO-PULSO — apenas cosmético quando muito perto
+      // 2. MICRO-PULSO — reduzido durante snap de fechamento
       let pulse = 0;
-      if (priceDistance < priceRange * 0.1) {
+      const snapActive = snap && snap.blend > 0.2;
+      if (!snapActive && priceDistance < priceRange * 0.1) {
         pulse = (Math.random() - 0.5) * (engine.realPrice * engine.jitter * dt);
       }
 
@@ -808,10 +871,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
     }, [marketStatus]);
 
-    // ===== PROCESSAMENTO DE TICKS — SIMPLIFICADO =====
-    // Lógica clara em 2 caminhos:
-    // - Crypto (Binance): usa isClosed da API para saber quando fechar candle
-    // - Forex/OTC: usa cálculo de período temporal
+    // ===== PROCESSAMENTO DE TICKS — CAMINHO UNIFICADO =====
+    // Crypto (Binance): isClosed explícito da API
+    // Forex/OTC: isClosed=false + detecção de mudança de período (mesmo fluxo)
     // Regra de ouro: open do live candle = close do último candle no histórico. Sempre.
     
     // Helper: limpar todos os caches de interpolação de live candles
@@ -824,16 +886,25 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     }, []);
     
     // Helper: congelar live candle atual no histórico
+    // Referência compartilhada: candle já está em candlesRef — finaliza in-place, sem duplicar
     const freezeLiveCandle = useCallback(() => {
       if (!liveCandleRef.current) return;
       
       const engine = candleEngineRef.current;
-      // Usar realPrice (preço real do último tick) em vez de visualPrice (interpolado)
-      // para evitar gaps laterais entre candles
       const finalClose = engine.realPrice > 0 ? engine.realPrice : liveCandleRef.current.close;
       const high = Math.max(liveCandleRef.current.high, finalClose);
       const low = Math.min(liveCandleRef.current.low, finalClose);
       const close = Math.max(low, Math.min(high, finalClose));
+      
+      const lastHist = candlesRef.current[candlesRef.current.length - 1];
+      if (lastHist === liveCandleRef.current) {
+        lastHist.high = high;
+        lastHist.low = low;
+        lastHist.close = close;
+        liveCandleRef.current = null;
+        clearLiveCandleCache();
+        return;
+      }
       
       const closedCandle: CandleData = {
         time: liveCandleRef.current.time,
@@ -845,7 +916,6 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       liveCandleRef.current = null;
       clearLiveCandleCache();
       
-      // Ajustar viewport
       if (viewportRef.current.isAtEnd) {
         const maxStart = Math.max(0, candlesRef.current.length - viewportRef.current.visibleCandleCount);
         viewportRef.current.visibleStartIndex = maxStart;
@@ -865,7 +935,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         low: Math.min(prevClose, tickPrice),
         close: tickPrice,
       };
-      
+
+      lastCandleTimeRef.current = periodStart;
       clearLiveCandleCache();
       
       // Resetar motor de física
@@ -877,6 +948,38 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       engine.lastTickTime = tickTime;
     }, [clearLiveCandleCache]);
 
+    /** Virada de período sincronizada com currentTime (mesma base do timer lateral MM:SS) */
+    const rolloverLiveCandleByClock = useCallback((nowMs: number) => {
+      if (!historicalDataLoadedRef.current || candlesRef.current.length === 0) return;
+
+      const chartPeriod = getBarTime(nowMs, timeframe);
+      const lastCandle = candlesRef.current[candlesRef.current.length - 1];
+      const effectiveLive = liveCandleRef.current ?? lastCandle;
+      const livePeriod = getBarTime(effectiveLive.time, timeframe);
+
+      if (chartPeriod <= livePeriod) return;
+
+      const engine = candleEngineRef.current;
+      const price = engine.visualPrice > 0
+        ? engine.visualPrice
+        : engine.realPrice > 0
+          ? engine.realPrice
+          : effectiveLive.close;
+
+      if (liveCandleRef.current) {
+        liveCandleRef.current.close = price;
+        liveCandleRef.current.high = Math.max(liveCandleRef.current.high, price);
+        liveCandleRef.current.low = Math.min(liveCandleRef.current.low, price);
+        freezeLiveCandle();
+      }
+
+      if (!liveCandleRef.current) {
+        createLiveCandle(chartPeriod, price, nowMs);
+      }
+
+      lastCandleTimeRef.current = chartPeriod;
+    }, [timeframe, freezeLiveCandle, createLiveCandle]);
+
     useEffect(() => {
       if (!lastTick || !historicalDataLoadedRef.current) return;
 
@@ -884,11 +987,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const tickPrice = tick.price;
       const tickTime = tick.timestamp;
 
-      // Evitar processar mesmo tick 2x
       if (lastProcessedTickRef.current === tickTime) return;
       lastProcessedTickRef.current = tickTime;
 
-      // Sem candles ainda — criar o primeiro
       if (candlesRef.current.length === 0) {
         const periodStart = getBarTime(tickTime, timeframe);
         candlesRef.current = [{
@@ -903,126 +1004,87 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         engine.lastTickTime = tickTime;
         engine.lastFrameTime = performance.now();
         if (onPriceUpdate) onPriceUpdate(tickPrice);
+        syncChartLoadingState();
         return;
       }
 
-      // ===== CAMINHO CRYPTO (Binance com isClosed) =====
       if (tick.isClosed !== undefined) {
-        // Marcar como ativo crypto — impede checkAndCreateLiveCandle e drawChart fallback
-        // de criar live candles prematuramente (crypto usa APENAS isClosed)
         isCryptoAssetRef.current = true;
-        
-        if (tick.isClosed) {
-          // Candle FECHOU — finalizar e NÃO criar novo live candle ainda
-          // Isso garante que o próximo live candle será criado com open = este close
+      }
+
+      // Primeiro tick após histórico: sincronizar motor sem distorcer candles históricos
+      if (firstTickAfterHistoryRef.current) {
+        firstTickAfterHistoryRef.current = false;
+        const engine = candleEngineRef.current;
+        engine.realPrice = tickPrice;
+        engine.visualPrice = tickPrice;
+        engine.velocity = 0;
+        engine.inertia = 0;
+      }
+
+      const isClosed = tick.isClosed === true;
+      const periodStart = getBarTime(tickTime, timeframe);
+
+      if (isClosed) {
+        if (liveCandleRef.current) {
+          liveCandleRef.current.close = tickPrice;
+          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
+          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
+        }
+        const engine = candleEngineRef.current;
+        engine.realPrice = tickPrice;
+        engine.lastTickTime = tickTime;
+
+        // isClosed do servidor é sempre 1m (KlineAggregator/Binance); só fechar quando o período do gráfico virou
+        const tickChartPeriod = getBarTime(tickTime, timeframe);
+        const lastHist = candlesRef.current[candlesRef.current.length - 1];
+        const livePeriod = liveCandleRef.current
+          ? getBarTime(liveCandleRef.current.time, timeframe)
+          : lastHist
+            ? getBarTime(lastHist.time, timeframe)
+            : 0;
+
+        if (tickChartPeriod > livePeriod) {
           if (liveCandleRef.current) {
-            // Usar o close real da Binance como close final
-            liveCandleRef.current.close = tickPrice;
-            liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
-            liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
-            
-            // Verificar se é referência compartilhada (candle já está no candlesRef)
-            const lastHist = candlesRef.current[candlesRef.current.length - 1];
-            if (lastHist === liveCandleRef.current) {
-              // REFERÊNCIA COMPARTILHADA: candle já está no histórico, só limpar liveCandleRef
-              liveCandleRef.current = null;
-              clearLiveCandleCache();
-            } else {
-              // Objeto separado (criado via createLiveCandle): usar freezeLiveCandle para adicionar ao histórico
-              freezeLiveCandle();
-            }
+            freezeLiveCandle();
           }
-          // Motor de física: atualizar com close final
-          const engine = candleEngineRef.current;
-          engine.realPrice = tickPrice;
-          engine.lastTickTime = tickTime;
-        } else {
-          // Candle EM FORMAÇÃO — atualizar ou criar live candle
-          const periodStart = getBarTime(tickTime, timeframe);
-          
           if (!liveCandleRef.current) {
-            // Não existe live candle — verificar se o último candle histórico é do mesmo período
-            const lastHist = candlesRef.current[candlesRef.current.length - 1];
-            const lastHistPeriod = lastHist ? getBarTime(lastHist.time, timeframe) : 0;
-            
-            if (lastHist && periodStart === lastHistPeriod) {
-              // REFERÊNCIA COMPARTILHADA: apontar liveCandleRef para o candle já existente no histórico
-              // Sem pop — o candle fica no candlesRef E no liveCandleRef (mesmo objeto)
-              liveCandleRef.current = lastHist;
-              liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
-              liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
-              liveCandleRef.current.close = tickPrice;
-              const engine = candleEngineRef.current;
-              engine.realPrice = tickPrice;
-              engine.visualPrice = tickPrice;
-              engine.velocity = 0;
-              engine.inertia = 0;
-              engine.lastTickTime = tickTime;
-            } else {
-              // Período diferente — criar novo live candle separado (open = close do último histórico)
-              createLiveCandle(periodStart, tickPrice, tickTime);
-            }
-          } else {
-            // SAFETY NET: Detectar mudança de período mesmo sem ter recebido isClosed=true
-            // Isso cobre o caso onde o sinal de fechamento foi perdido por qualquer motivo
-            const currentLivePeriod = getBarTime(liveCandleRef.current.time, timeframe);
-            if (periodStart > currentLivePeriod) {
-              // Período mudou! Congelar candle anterior e criar novo
-              liveCandleRef.current.close = tickPrice;
-              freezeLiveCandle();
-              createLiveCandle(periodStart, tickPrice, tickTime);
-            } else {
-              // Mesmo período — apenas atualizar high/low e motor de física
-              liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
-              liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
-              // close é atualizado pelo motor de física no drawChart
-              const engine = candleEngineRef.current;
-              engine.realPrice = tickPrice;
-              engine.lastTickTime = tickTime;
-            }
+            createLiveCandle(tickChartPeriod, tickPrice, tickTime);
           }
         }
       } else {
-        // ===== CAMINHO FOREX/OTC (sem isClosed, usa período temporal) =====
-        const periodStart = getBarTime(tickTime, timeframe);
-        const lastCandle = candlesRef.current[candlesRef.current.length - 1];
-        const lastPeriod = getBarTime(lastCandle.time, timeframe);
-        
-        // Bridge: eliminar gap entre histórico e live na transição
-        if (firstTickAfterHistoryRef.current && candlesRef.current.length > 0) {
-          firstTickAfterHistoryRef.current = false;
-          const lastClose = lastCandle.close;
-          const gap = Math.abs(tickPrice - lastClose) / lastClose;
-          if (gap > 0.001) {
-            // Gap > 0.1%: ajustar últimos candles para transição suave
-            const bridgeCount = Math.min(20, candlesRef.current.length);
-            const totalLen = candlesRef.current.length;
-            for (let i = 0; i < bridgeCount; i++) {
-              const idx = totalLen - bridgeCount + i;
-              const weight = (i + 1) / bridgeCount;
-              const shift = (tickPrice - lastClose) * weight;
-              candlesRef.current[idx].open += shift;
-              candlesRef.current[idx].high += shift;
-              candlesRef.current[idx].low += shift;
-              candlesRef.current[idx].close += shift;
-            }
-            clearLiveCandleCache();
-          }
-        }
-        
-        if (periodStart > lastPeriod) {
-          if (liveCandleRef.current) {
+        if (!liveCandleRef.current) {
+          const lastHist = candlesRef.current[candlesRef.current.length - 1];
+          const lastHistPeriod = lastHist ? getBarTime(lastHist.time, timeframe) : 0;
+
+          if (lastHist && periodStart === lastHistPeriod) {
+            liveCandleRef.current = lastHist;
+            liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
+            liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
             liveCandleRef.current.close = tickPrice;
-            freezeLiveCandle();
+            const engine = candleEngineRef.current;
+            engine.realPrice = tickPrice;
+            engine.visualPrice = tickPrice;
+            engine.velocity = 0;
+            engine.inertia = 0;
+            engine.lastTickTime = tickTime;
+          } else {
+            createLiveCandle(periodStart, tickPrice, tickTime);
           }
-          createLiveCandle(periodStart, tickPrice, tickTime);
         } else {
-          if (!liveCandleRef.current) {
+          const currentLivePeriod = getBarTime(liveCandleRef.current.time, timeframe);
+          if (periodStart > currentLivePeriod) {
+            liveCandleRef.current.close = tickPrice;
+            liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
+            liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
+            const engine = candleEngineRef.current;
+            engine.realPrice = tickPrice;
+            engine.lastTickTime = tickTime;
+            freezeLiveCandle();
             createLiveCandle(periodStart, tickPrice, tickTime);
           } else {
             liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
             liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
-            liveCandleRef.current.close = tickPrice;
             const engine = candleEngineRef.current;
             engine.realPrice = tickPrice;
             engine.lastTickTime = tickTime;
@@ -1032,6 +1094,12 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
       if (onPriceUpdate) onPriceUpdate(tickPrice);
     }, [lastTick, timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle]);
+
+    // Virada de candle pelo relógio — sincronizada com o timer lateral (MM:SS) e currentTime do gráfico
+    useEffect(() => {
+      if (!currentTime) return;
+      rolloverLiveCandleByClock(currentTime.getTime());
+    }, [currentTime, rolloverLiveCandleByClock]);
 
     // Handler de visibilidade da página - ao voltar à aba, resetar motor de física
     // para evitar saltos e gaps causados por ticks acumulados enquanto a aba estava inativa
@@ -1061,109 +1129,6 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       return () => document.removeEventListener('visibilitychange', handleVisibility);
     }, [clearLiveCandleCache]);
 
-    // CRÍTICO: Criar live candle imediatamente quando o período muda, sem esperar por tick
-    // Isso elimina o delay na abertura do novo candle
-    useEffect(() => {
-      if (!historicalDataLoadedRef.current || candlesRef.current.length === 0) {
-        return;
-      }
-
-      const checkAndCreateLiveCandle = () => {
-        // CRYPTO: Não criar live candles por timer para crypto
-        // Crypto usa exclusivamente isClosed da Binance para gerenciar candles
-        if (isCryptoAssetRef.current) return;
-        
-        const validCurrentTime = currentTimeRef.current instanceof Date ? currentTimeRef.current : new Date();
-        const currentTime = validCurrentTime.getTime();
-        const currentCandlePeriodStart = getBarTime(currentTime, timeframe);
-        
-        const lastCandle = candlesRef.current[candlesRef.current.length - 1];
-        const lastCandlePeriodStart = getBarTime(lastCandle.time, timeframe);
-        
-        // CRÍTICO: Limitar o gap temporal entre o último candle histórico e o live candle
-        // Isso evita que o gráfico fique com um enorme espaço vazio quando o mercado está fechado
-        // (ex: forex no fim de semana, ações fora do horário de negociação)
-        const timeframeMsLocal: Record<string, number> = {
-          '1m': 60000, '2m': 120000, '5m': 300000, '10m': 600000,
-          '15m': 900000, '30m': 1800000, '1h': 3600000, '2h': 7200000,
-          '4h': 14400000, '8h': 28800000, '12h': 43200000,
-          '1d': 86400000, '1w': 604800000, '1M': 2592000000,
-        };
-        const periodMsLocal = timeframeMsLocal[timeframe] || 60000;
-        const maxGapPeriods = 3; // Máximo de 3 períodos de gap
-        const maxGapMs = periodMsLocal * maxGapPeriods;
-        const gapMs = currentCandlePeriodStart - lastCandlePeriodStart;
-        
-        // Se o gap é muito grande (mercado fechado), posicionar o live candle logo após o último histórico
-        const effectivePeriodStart = gapMs > maxGapMs
-          ? lastCandlePeriodStart + periodMsLocal
-          : currentCandlePeriodStart;
-        
-        // Se o período atual é maior que o último histórico, criar live candle imediatamente
-        if (effectivePeriodStart > lastCandlePeriodStart) {
-          // CRÍTICO: Fechar o live candle anterior se existir e adicionar ao histórico
-          if (liveCandleRef.current && liveCandleRef.current.time < effectivePeriodStart) {
-            // Fechar o live candle anterior usando o visualPrice final do motor de física
-            const engine = candleEngineRef.current;
-            const finalClose = engine.visualPrice > 0 ? engine.visualPrice : liveCandleRef.current.close;
-            
-            // CRÍTICO: Garantir consistência entre high, low e close para evitar bug visual
-            const consistentHigh = Math.max(liveCandleRef.current.high, finalClose);
-            const consistentLow = Math.min(liveCandleRef.current.low, finalClose);
-            const consistentClose = Math.max(consistentLow, Math.min(consistentHigh, finalClose));
-            
-            // Criar candle fechado com os valores finais consistentes
-            const closedCandle: CandleData = {
-              time: liveCandleRef.current.time,
-              open: liveCandleRef.current.open,
-              high: consistentHigh,
-              low: consistentLow,
-              close: consistentClose,
-            };
-            
-            // Adicionar ao histórico
-            candlesRef.current = [...candlesRef.current, closedCandle];
-          }
-          
-          // Verificar se já existe live candle para este período
-          if (!liveCandleRef.current || liveCandleRef.current.time !== effectivePeriodStart) {
-            // Usar o último candle do histórico atualizado
-            const updatedLastCandle = candlesRef.current[candlesRef.current.length - 1];
-            
-            // Criar live candle imediatamente com o close do último candle histórico como open
-            const engine = candleEngineRef.current;
-            const initialPrice = engine.visualPrice > 0 ? engine.visualPrice : updatedLastCandle.close;
-            
-            liveCandleRef.current = {
-              time: effectivePeriodStart,
-              open: updatedLastCandle.close, // FIXO: nunca mudar depois de criado
-              high: initialPrice,
-              low: initialPrice,
-              close: initialPrice, // Será atualizado pelo visualPrice no render
-            };
-            
-            // Atualizar motor de física
-            engine.realPrice = initialPrice;
-            engine.visualPrice = initialPrice;
-            engine.velocity = 0;
-            engine.inertia = 0;
-            engine.lastTickTime = currentTime;
-            
-            // Limpar caches de live candle para renderização limpa
-            clearLiveCandleCache();
-          }
-        }
-      };
-
-      // Verificar imediatamente
-      checkAndCreateLiveCandle();
-
-      // Verificar a cada segundo para detectar mudança de período rapidamente
-      const interval = setInterval(checkAndCreateLiveCandle, 1000);
-      
-      return () => clearInterval(interval);
-    }, [timeframe, historicalDataLoadedRef.current]);
-
     /**
      * Carrega dados históricos
      */
@@ -1172,15 +1137,16 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       historicalDataLoadedRef.current = false; // Resetar flag de dados carregados
       liveCandleRef.current = null; // Resetar live candle ao trocar de ativo
       
-      // CRYPTO: Detectar imediatamente por símbolo para bloquear checkAndCreateLiveCandle
-      // e drawChart fallback ANTES de qualquer timer executar
+      // Detectar crypto por símbolo (refinado quando ticks trazem isClosed)
       const cryptoBases = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'DOT', 'MATIC', 'LINK', 'LTC', 'AVAX', 'UNI', 'ATOM', 'SHIB', 'TRX'];
       const base = symbol.split('/')[0]?.toUpperCase() || '';
       isCryptoAssetRef.current = cryptoBases.includes(base);
       
       
       try {
-        const url = `/api/market/historical?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=500`;
+        const minRequired = Math.max(100, getMaxIndicatorPeriod());
+        const limit = Math.max(500, minRequired + 50);
+        const url = `/api/market/historical?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`;
         const response = await fetch(url);
         
         if (!response.ok) {
@@ -1204,6 +1170,21 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             // Isso é necessário porque a API pode retornar candles em intervalos diferentes
             // (ex: sempre retorna 1m, mas precisamos agrupar em 5m, 15m, etc.)
             candlesRef.current = groupCandlesByTimeframe(rawCandles, timeframe);
+
+            // OTC: alinhar último candle ao preço-âncora da API (continuidade histórico → live)
+            const anchorPrice = typeof data.anchorPrice === 'number' && data.anchorPrice > 0
+              ? data.anchorPrice
+              : null;
+            if (data.source === 'otc' && anchorPrice && candlesRef.current.length > 0) {
+              const last = candlesRef.current[candlesRef.current.length - 1];
+              const prevClose = candlesRef.current.length > 1
+                ? candlesRef.current[candlesRef.current.length - 2].close
+                : last.open;
+              last.open = prevClose;
+              last.close = anchorPrice;
+              last.high = Math.max(last.high, anchorPrice);
+              last.low = Math.min(last.low, anchorPrice);
+            }
             
             if (candlesRef.current.length > 0) {
               const lastCandle = candlesRef.current[candlesRef.current.length - 1];
@@ -1232,9 +1213,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               const maxIndicatorPeriod = getMaxIndicatorPeriod();
               const minCandlesRequired = Math.max(100, maxIndicatorPeriod);
               const hasEnoughData = candlesRef.current.length >= minCandlesRequired;
-              
-              // Marcar como pronto apenas se tivermos dados suficientes
-              isDataReadyRef.current = hasEnoughData;
+
+              // Motor de física e rollover ativos com qualquer histórico válido (≥2 candles)
+              isDataReadyRef.current = candlesRef.current.length >= 2;
               firstTickAfterHistoryRef.current = true; // Próximo ticket será o primeiro após histórico
               
               if (!hasEnoughData) {
@@ -1249,16 +1230,15 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               viewportRef.current.visibleStartIndex = Math.max(0, candlesRef.current.length - initialCandleCount);
               viewportRef.current.isAtEnd = true; // Marcar que está no final
               
-              // CRYPTO: Usar REFERÊNCIA COMPARTILHADA para o candle em formação
-              // O último candle do histórico É o candle em formação — não remover, apenas apontar liveCandleRef para ele
-              // Isso garante: (1) sem delay, (2) sem duplicação, (3) sem conflito com cache de interpolação
-              if (isCryptoAssetRef.current && candlesRef.current.length > 1) {
+              // Referência compartilhada: último candle histórico = candle em formação (crypto + forex)
+              if (candlesRef.current.length > 0) {
                 const lastCandlePeriod = getBarTime(lastCandle.time, timeframe);
-                const currentPeriod = getBarTime(Date.now(), timeframe);
-                
+                const syncNow = currentTimeRef.current instanceof Date
+                  ? currentTimeRef.current.getTime()
+                  : Date.now();
+                const currentPeriod = getBarTime(syncNow, timeframe);
+
                 if (lastCandlePeriod === currentPeriod) {
-                  // Apontar liveCandleRef para o MESMO OBJETO no candlesRef (referência compartilhada)
-                  // Quando drawChart atualizar liveCandleRef.current.close, também atualiza o candle no histórico
                   liveCandleRef.current = candlesRef.current[candlesRef.current.length - 1];
                 }
               }
@@ -1296,6 +1276,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       } finally {
         historicalDataLoadedRef.current = true;
         isLoadingRef.current = false; // Finalizar estado de carregamento
+        syncChartLoadingState();
       }
     };
 
@@ -1436,50 +1417,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const isLoading = isLoadingRef.current || candles.length === 0 || !historicalDataLoadedRef.current;
       
       if (isLoading) {
-        // BARRA DE CARREGAMENTO LATERAL SIMPLES
-        const loadingAnimationTime = Date.now() / 1000; // Tempo em segundos
-        const centerY = canvasHeight / 2;
-        const centerX = canvasWidth / 2;
-        
-        // Dimensões da barra
-        const barWidth = Math.min(canvasWidth * 0.4, 300);
-        const barHeight = 3;
-        const barX = centerX - barWidth / 2;
-        const barY = centerY - barHeight / 2;
-        
-        // Fundo da barra
-        ctx.fillStyle = 'rgba(55, 65, 81, 0.3)';
-        ctx.fillRect(barX, barY, barWidth, barHeight);
-        
-        // Barra animada - movimento único da esquerda para direita, sempre dentro do espaço cinza
-        const animationPhase = (loadingAnimationTime * 0.67) % 1; // 1.5s por ciclo
-        const barProgress = animationPhase; // 0 a 1 (esquerda para direita)
-        
-        const barFillWidth = barWidth * 0.4;
-        // A barra começa completamente dentro à esquerda (0) e termina completamente dentro à direita
-        // O movimento máximo é barWidth - barFillWidth para que a barra não ultrapasse os limites
-        const maxPosition = barWidth - barFillWidth;
-        const barPosition = barProgress * maxPosition;
-        
-        // Gradiente da barra
-        const barGradient = ctx.createLinearGradient(
-          barX + barPosition, barY,
-          barX + barPosition + barFillWidth, barY
-        );
-        barGradient.addColorStop(0, 'rgba(59, 130, 246, 0.3)');
-        barGradient.addColorStop(0.5, 'rgba(59, 130, 246, 0.8)');
-        barGradient.addColorStop(1, 'rgba(59, 130, 246, 0.3)');
-        
-        ctx.fillStyle = barGradient;
-        ctx.fillRect(barX + barPosition, barY, barFillWidth, barHeight);
-        
-        // Texto de carregamento
-        const textOpacity = 0.4 + Math.sin(loadingAnimationTime * 2) * 0.2;
-        ctx.fillStyle = `rgba(107, 114, 128, ${textOpacity})`;
-        ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('Carregando dados do mercado...', centerX, barY + 30);
+        ctx.fillStyle = '#030305';
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         return;
       }
 
@@ -1551,80 +1490,13 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         interpolatedCandlesRef.current.clear();
       }
       
-      // Live Candle: preferencialmente criado/atualizado no useEffect de ticks.
-      // Aqui atualizamos o preço visual (close) e garantimos fallback de criação
-      // quando um novo período começa sem tick imediato (evita "traço" antes do live candle).
+      // Live candle: close/high/low animados via visualPrice
       if (liveCandleRef.current) {
         const engine = candleEngineRef.current;
-        if (engine.visualPrice > 0) {
-          // Atualizar apenas o close com o preço visual (para animação suave)
-          // O high e low são atualizados no useEffect quando chegam ticks reais
+        if (engine.visualPrice > 0 && isFinite(engine.visualPrice)) {
           liveCandleRef.current.close = engine.visualPrice;
-        }
-      }
-      
-      // Fallback: se o período mudou e ainda não há live candle do novo período, criar imediatamente
-      // CRYPTO: Não criar live candles via fallback — crypto usa exclusivamente isClosed
-      if (viewport.isAtEnd && candles.length > 0 && !isCryptoAssetRef.current) {
-        const validCurrentTime = currentTimeRef.current instanceof Date ? currentTimeRef.current : new Date();
-        const currentPeriodStart = getBarTime(validCurrentTime.getTime(), timeframe);
-        
-        // CRÍTICO: Limitar o gap entre último candle histórico e o live candle
-        // Evita gráfico esticado quando mercado está fechado (forex fim de semana, ações fora do horário)
-        const lastHistoricalCandle = candles[candles.length - 1];
-        const lastHistoricalPeriodStart = getBarTime(lastHistoricalCandle.time, timeframe);
-        const periodMsFallback = {
-          '1m': 60000, '2m': 120000, '5m': 300000, '10m': 600000,
-          '15m': 900000, '30m': 1800000, '1h': 3600000, '2h': 7200000,
-          '4h': 14400000, '8h': 28800000, '12h': 43200000,
-          '1d': 86400000, '1w': 604800000, '1M': 2592000000,
-        }[timeframe] || 60000;
-        const gapPeriods = (currentPeriodStart - lastHistoricalPeriodStart) / periodMsFallback;
-        const maxGapPeriods = 3;
-        const effectivePeriodStartFallback = gapPeriods > maxGapPeriods
-          ? lastHistoricalPeriodStart + periodMsFallback
-          : currentPeriodStart;
-        
-        if (!liveCandleRef.current || liveCandleRef.current.time < effectivePeriodStartFallback) {
-          const engine = candleEngineRef.current;
-          const fallbackPrice = engine.visualPrice > 0 ? engine.visualPrice : candles[candles.length - 1].close;
-          
-          // Se ainda houver um live candle antigo não fechado, fechar antes de criar o novo
-          if (liveCandleRef.current) {
-            const lastHistorical = candlesRef.current[candlesRef.current.length - 1];
-            if (!lastHistorical || lastHistorical.time !== liveCandleRef.current.time) {
-              const consistentHigh = Math.max(liveCandleRef.current.high, fallbackPrice);
-              const consistentLow = Math.min(liveCandleRef.current.low, fallbackPrice);
-              const consistentClose = Math.max(consistentLow, Math.min(consistentHigh, fallbackPrice));
-              const closedCandle: CandleData = {
-                time: liveCandleRef.current.time,
-                open: liveCandleRef.current.open,
-                high: consistentHigh,
-                low: consistentLow,
-                close: consistentClose,
-              };
-              candlesRef.current = [...candlesRef.current, closedCandle];
-            }
-          }
-          
-          const lastClose = candlesRef.current[candlesRef.current.length - 1]?.close ?? fallbackPrice;
-          liveCandleRef.current = {
-            time: effectivePeriodStartFallback,
-            open: lastClose,
-            high: fallbackPrice,
-            low: fallbackPrice,
-            close: fallbackPrice,
-          };
-          
-          // Limpar cache de live candle para garantir primeiro frame correto
-          const keysToDelete: number[] = [];
-          interpolatedCandlesRef.current.forEach((_, key) => {
-            if (key < 0) {
-              keysToDelete.push(key);
-            }
-          });
-          keysToDelete.forEach(key => interpolatedCandlesRef.current.delete(key));
-          lastRenderedLiveCandleTimeRef.current = null;
+          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, engine.visualPrice);
+          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, engine.visualPrice);
         }
       }
 
@@ -4895,277 +4767,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         }
       }
       
-      // Desenhar linhas - SEMPRE, independente de ter candles ou não
-      // Desenhar linha de expiração (branca) - 30 segundos ANTES da linha de chegada (vermelha)
-      if (expirationX >= chartX + candlesAreaOffset - 200 && expirationX <= chartX + candlesAreaOffset + candlesAreaWidth + 200) {
-          
-          // Desenhar linha vertical pontilhada BRANCA (revertido)
-          ctx.strokeStyle = '#ffffff'; // Branco nítido
-          ctx.lineWidth = 1;
-          ctx.setLineDash([2, 3]); // Pontilhado mais espaçado
-          ctx.beginPath();
-          ctx.moveTo(expirationX, chartY);
-          ctx.lineTo(expirationX, chartY + chartHeight);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          
-          // Calcular timer: contagem regressiva de 1 minuto (já calculado acima)
-          const countdownMinutes = Math.floor(timeLeft / 60);
-          const countdownSecs = timeLeft % 60;
-          const countdownStr = `${countdownMinutes.toString().padStart(2, '0')}:${countdownSecs.toString().padStart(2, '0')}`;
-          
-          // Alerta visual: mudar cor para vermelho nos últimos 10 segundos
-          const isLowTime = timeLeft <= 10;
-          
-          // Calcular distância entre a linha de deadline (branca) e a linha de chegada (vermelha)
-          const distanceBetweenLines = Math.abs(finishLineX - expirationX);
-          const showExpirationTime = distanceBetweenLines >= 70; // Mostrar horário apenas no zoom in
-          
-          // OCULTAR timer do deadline quando há operação ativa (pois já temos a caixa de info)
-          if (!hasActiveTrade) {
-            // Desenhar timer numérico acima da linha (muda de cor para vermelho se <= 10s)
-            ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            
-            const countdownX = expirationX;
-            const countdownY = chartY - 12;
-            
-            // Fundo arredondado para o cronômetro
-            const countdownWidth = ctx.measureText(countdownStr).width;
-            const countdownPadding = 6;
-            const countdownHeight = 20;
-            const cornerRadius = 4;
-            
-            // Fundo com bordas arredondadas (vermelho se <= 10s)
-            ctx.fillStyle = isLowTime ? 'rgba(239, 68, 68, 0.8)' : 'rgba(0, 0, 0, 0.7)';
-            ctx.beginPath();
-            ctx.moveTo(countdownX - countdownWidth / 2 - countdownPadding + cornerRadius, countdownY - countdownHeight / 2);
-            ctx.lineTo(countdownX + countdownWidth / 2 + countdownPadding - cornerRadius, countdownY - countdownHeight / 2);
-            ctx.quadraticCurveTo(countdownX + countdownWidth / 2 + countdownPadding, countdownY - countdownHeight / 2, countdownX + countdownWidth / 2 + countdownPadding, countdownY - countdownHeight / 2 + cornerRadius);
-            ctx.lineTo(countdownX + countdownWidth / 2 + countdownPadding, countdownY + countdownHeight / 2 - cornerRadius);
-            ctx.quadraticCurveTo(countdownX + countdownWidth / 2 + countdownPadding, countdownY + countdownHeight / 2, countdownX + countdownWidth / 2 + countdownPadding - cornerRadius, countdownY + countdownHeight / 2);
-            ctx.lineTo(countdownX - countdownWidth / 2 - countdownPadding + cornerRadius, countdownY + countdownHeight / 2);
-            ctx.quadraticCurveTo(countdownX - countdownWidth / 2 - countdownPadding, countdownY + countdownHeight / 2, countdownX - countdownWidth / 2 - countdownPadding, countdownY + countdownHeight / 2 - cornerRadius);
-            ctx.lineTo(countdownX - countdownWidth / 2 - countdownPadding, countdownY - countdownHeight / 2 + cornerRadius);
-            ctx.quadraticCurveTo(countdownX - countdownWidth / 2 - countdownPadding, countdownY - countdownHeight / 2, countdownX - countdownWidth / 2 - countdownPadding + cornerRadius, countdownY - countdownHeight / 2);
-            ctx.closePath();
-            ctx.fill();
-            
-            // Borda (branca ou vermelha)
-            ctx.strokeStyle = isLowTime ? 'rgba(239, 68, 68, 0.9)' : 'rgba(255, 255, 255, 0.3)';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-            
-            // Texto do cronômetro (branco ou vermelho)
-            ctx.fillStyle = isLowTime ? '#ffffff' : 'rgba(255, 255, 255, 0.9)';
-            ctx.fillText(countdownStr, countdownX, countdownY);
-          }
-          
-          // Desenhar ícone de cronômetro embaixo da linha de expiração (círculo branco com ícone preto)
-          const stopwatchY = chartY + chartHeight + 18;
-          const stopwatchSize = 11; // Tamanho reduzido do cronômetro para caber melhor no círculo
-          const circleRadius = stopwatchSize / 2 + 5; // Raio aumentado do círculo branco
-          
-          ctx.save();
-          ctx.translate(expirationX, stopwatchY);
-          
-          // 1. Desenhar círculo branco de fundo
-          ctx.fillStyle = '#ffffff'; // Branco sólido
-          ctx.beginPath();
-          ctx.arc(0, 0, circleRadius, 0, Math.PI * 2);
-          ctx.fill();
-          
-          // 2. Desenhar ícone de cronômetro PRETO dentro do círculo branco (contorno mais grosso)
-          ctx.strokeStyle = '#000000'; // Preto para o ícone
-          ctx.fillStyle = '#000000'; // Preto para o ícone
-          ctx.lineWidth = stopwatchSize * 0.12; // Contorno mais grosso (aumentado de 0.08 para 0.12)
-          ctx.lineCap = 'round';
-          
-          // Corpo do Relógio (círculo preto)
-          ctx.beginPath();
-          ctx.arc(0, 0, stopwatchSize / 2, 0, Math.PI * 2);
-          ctx.stroke();
-          
-          // Botão Superior (retângulo no topo)
-          ctx.fillRect(-stopwatchSize * 0.15, -stopwatchSize * 0.65, stopwatchSize * 0.3, stopwatchSize * 0.15);
-          
-          // Ponteiro Animado (Gira conforme o tempo)
-          const bottomCurrentSeconds = validCurrentTime.getSeconds();
-          const bottomCurrentMilliseconds = validCurrentTime.getMilliseconds();
-          const bottomTotalSeconds = bottomCurrentSeconds + bottomCurrentMilliseconds / 1000;
-          const bottomAngle = (bottomTotalSeconds / 60) * Math.PI * 2 - Math.PI / 2;
-          
-          ctx.lineWidth = stopwatchSize * 0.08;
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.lineTo(Math.cos(bottomAngle) * (stopwatchSize * 0.3), Math.sin(bottomAngle) * (stopwatchSize * 0.3));
-          ctx.stroke();
-          
-          // Ponto Central
-          ctx.beginPath();
-          ctx.arc(0, 0, stopwatchSize * 0.05, 0, Math.PI * 2);
-          ctx.fill();
-          
-          ctx.restore();
-        }
-        
-        // Desenhar linha de chegada (vermelha sólida) - no tempo exato do fechamento
-        if (finishLineX >= chartX + candlesAreaOffset - 200 && finishLineX <= chartX + candlesAreaOffset + candlesAreaWidth + 200) {
-          // Linha vertical vermelha sólida
-          ctx.strokeStyle = '#ef4444'; // Vermelho sólido
-          ctx.lineWidth = 2;
-          ctx.setLineDash([]); // Sólida
-          ctx.beginPath();
-          ctx.moveTo(finishLineX, chartY);
-          ctx.lineTo(finishLineX, chartY + chartHeight);
-          ctx.stroke();
-          
-          // Desenhar horário de expiração acima da linha vermelha (HH:MM) - apenas no zoom in
-          const distanceBetweenLinesForTime = Math.abs(finishLineX - expirationX);
-          const showExpirationTimeLabel = distanceBetweenLinesForTime >= 70;
-          
-          if (showExpirationTimeLabel) {
-            const expirationDate = new Date(targetExpiration);
-            const hours = expirationDate.getHours().toString().padStart(2, '0');
-            const minutes = expirationDate.getMinutes().toString().padStart(2, '0');
-            const timeStr = `${hours}:${minutes}`;
-            
-            ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            
-            const timeX = finishLineX;
-            const timeY = chartY - 8;
-            
-            // Fundo vermelho arredondado para o texto do tempo
-            const timeWidth = ctx.measureText(timeStr).width;
-            const timePadding = 6;
-            const timeHeight = 16;
-            const cornerRadius = 3;
-            
-            ctx.fillStyle = '#ef4444'; // Vermelho sólido
-            ctx.beginPath();
-            ctx.moveTo(timeX - timeWidth / 2 - timePadding + cornerRadius, timeY - timeHeight);
-            ctx.lineTo(timeX + timeWidth / 2 + timePadding - cornerRadius, timeY - timeHeight);
-            ctx.quadraticCurveTo(timeX + timeWidth / 2 + timePadding, timeY - timeHeight, timeX + timeWidth / 2 + timePadding, timeY - timeHeight + cornerRadius);
-            ctx.lineTo(timeX + timeWidth / 2 + timePadding, timeY - cornerRadius);
-            ctx.quadraticCurveTo(timeX + timeWidth / 2 + timePadding, timeY, timeX + timeWidth / 2 + timePadding - cornerRadius, timeY);
-            ctx.lineTo(timeX - timeWidth / 2 - timePadding + cornerRadius, timeY);
-            ctx.quadraticCurveTo(timeX - timeWidth / 2 - timePadding, timeY, timeX - timeWidth / 2 - timePadding, timeY - cornerRadius);
-            ctx.lineTo(timeX - timeWidth / 2 - timePadding, timeY - timeHeight + cornerRadius);
-            ctx.quadraticCurveTo(timeX - timeWidth / 2 - timePadding, timeY - timeHeight, timeX - timeWidth / 2 - timePadding + cornerRadius, timeY - timeHeight);
-            ctx.closePath();
-            ctx.fill();
-            
-            // Texto do tempo em branco
-            ctx.fillStyle = '#ffffff';
-            ctx.fillText(timeStr, timeX, timeY - 3);
-          }
-          
-          // Desenhar símbolo embaixo da linha vermelha
-          const finishLineY = chartY + chartHeight + 18; // Mesma posição Y do stopwatch
-          const iconCircleRadius = 11;
-          
-          if (hasActiveTrade) {
-            // OPERAÇÃO ATIVA: Desenhar cronômetro circular com tempo restante até expiração
-            const frozenExpiration = timelineEngineRef.current.frozenTargetExpiration || targetExpiration;
-            const timeRemainingMs = Math.max(0, frozenExpiration - serverTime);
-            const timeRemainingSeconds = Math.ceil(timeRemainingMs / 1000);
-            const timeRemainingMinutes = Math.floor(timeRemainingSeconds / 60);
-            const remainingSecondsDisplay = timeRemainingSeconds % 60;
-            
-            // Calcular progresso para o arco (0 a 1, onde 1 é completo)
-            // Assumindo que a operação dura até 5 minutos máximo para o progresso visual
-            const totalDuration = 60000; // 1 minuto de referência para o progresso
-            const elapsed = totalDuration - Math.min(timeRemainingMs, totalDuration);
-            const progress = elapsed / totalDuration;
-            
-            // Círculo de fundo (vermelho escuro)
-            ctx.fillStyle = '#7f1d1d'; // Vermelho escuro
-            ctx.beginPath();
-            ctx.arc(finishLineX, finishLineY, iconCircleRadius, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Arco de progresso (vermelho claro) - mostra quanto tempo já passou
-            ctx.strokeStyle = '#ef4444'; // Vermelho
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            const startAngle = -Math.PI / 2; // Começa no topo
-            const endAngle = startAngle + (progress * Math.PI * 2);
-            ctx.arc(finishLineX, finishLineY, iconCircleRadius - 1.5, startAngle, endAngle);
-            ctx.stroke();
-            
-            // Texto do tempo restante (MM:SS ou SS)
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            
-            let timeText: string;
-            if (timeRemainingMinutes > 0) {
-              timeText = `${timeRemainingMinutes}:${remainingSecondsDisplay.toString().padStart(2, '0')}`;
-            } else {
-              timeText = `${remainingSecondsDisplay}`;
-            }
-            ctx.fillText(timeText, finishLineX, finishLineY);
-            
-          } else {
-            // SEM OPERAÇÃO ATIVA: Desenhar bandeira de chegada
-            ctx.fillStyle = '#ef4444'; // Vermelho
-            ctx.beginPath();
-            ctx.arc(finishLineX, finishLineY, iconCircleRadius, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Bandeira simples (apenas o shape) - centralizada e responsiva dentro do círculo
-            const flagWidth = 10;
-            const flagHeight = 8;
-            const mastroWidth = 2;
-            const totalWidth = flagWidth + mastroWidth;
-            
-            const flagX = finishLineX - totalWidth / 2 + mastroWidth;
-            const flagY = finishLineY - flagHeight / 2;
-            
-            // Mastro da bandeira
-            const poleX = finishLineX - totalWidth / 2;
-            const poleHeight = flagHeight + 2;
-            const poleTop = finishLineY - poleHeight / 2;
-            
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(Math.round(poleX), Math.round(poleTop));
-            ctx.lineTo(Math.round(poleX), Math.round(poleTop + poleHeight));
-            ctx.stroke();
-            
-            // Contorno ondulado da bandeira
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            for (let i = 0; i <= 4; i++) {
-              const x = flagX + (i * flagWidth / 4);
-              const y = flagY + Math.sin(i * 1.2) * 0.5;
-              if (i === 0) {
-                ctx.moveTo(Math.round(x), Math.round(y));
-              } else {
-                ctx.lineTo(Math.round(x), Math.round(y));
-              }
-            }
-            for (let i = 0; i <= 3; i++) {
-              const x = flagX + flagWidth + Math.sin(i * 1.0) * 0.3;
-              const y = flagY + (i * flagHeight / 3);
-              ctx.lineTo(Math.round(x), Math.round(y));
-            }
-            for (let i = 4; i >= 0; i--) {
-              const x = flagX + (i * flagWidth / 4);
-              const y = flagY + flagHeight - Math.sin(i * 1.2) * 0.5;
-              ctx.lineTo(Math.round(x), Math.round(y));
-            }
-            ctx.lineTo(Math.round(flagX), Math.round(flagY));
-            ctx.closePath();
-            ctx.stroke();
-          }
-        }
+      // Linhas verticais de chegada (vermelha) e deadline (branca) removidas — expiração via UI lateral
       
       // DESENHAR TRADES (SNAPSHOTS) AQUI - DEPOIS DAS LINHAS PARA QUE SNAPshots SOBREPONHAM AS LINHAS
       drawTrades();
@@ -5394,6 +4996,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       isLoadingRef.current = true;
       historicalDataLoadedRef.current = false;
       candlesRef.current = []; // Limpar candles anteriores
+      setShowChartLoading(true);
+      onLoadingChangeRef.current?.(true);
       
       // Resetar estado de warm-up
       isDataReadyRef.current = false;
@@ -6956,6 +6560,12 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           <div className="absolute top-2 right-2 bg-orange-500/20 border border-orange-500/40 text-orange-200 px-3 py-1.5 rounded-none text-sm backdrop-blur-sm">
             Conectando...
           </div>
+        )}
+        {showChartLoading && loadingVariant === 'compact' && (
+          <ChartLoadingScreen
+            variant="compact"
+            message="Carregando dados do mercado..."
+          />
         )}
       </div>
     );

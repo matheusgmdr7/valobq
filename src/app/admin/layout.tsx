@@ -3,6 +3,7 @@
 import { ReactNode, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AdminSidebar } from '@/components/admin/AdminSidebar';
+import { AdminToaster } from '@/components/admin/AdminToaster';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
@@ -45,6 +46,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="h-screen bg-[#0a0a0b] flex overflow-hidden">
+      <AdminToaster />
       <AdminSidebar />
       <div 
         className="flex-1 ml-60 overflow-y-auto h-full" 

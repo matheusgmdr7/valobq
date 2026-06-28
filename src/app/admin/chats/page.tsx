@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Chat, ChatMessage } from '@/services/chatService';
 import { Send, MessageSquare, Clock, CheckCircle2, XCircle, User } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 interface ChatWithUser extends Chat {
   userName?: string;

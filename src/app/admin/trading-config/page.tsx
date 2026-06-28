@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Edit, Save, X, Power, PowerOff, Plus, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { marketService, CurrencyPair } from '@/services/marketService';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 interface TradingConfig {
   id: string;

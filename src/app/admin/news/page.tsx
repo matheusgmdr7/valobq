@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Edit, Trash2, X, Save, Search, Globe, TrendingUp, Coins, BarChart3, Package, RefreshCw } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMarketNews, MarketNews } from '@/services/marketNewsService';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 export default function NewsAdminPage() {
   const [news, setNews] = useState<MarketNews[]>([]);

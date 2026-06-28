@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Activity, Clock, Power, PowerOff, RefreshCw, ArrowUpRight, ArrowDownRight, History, Radio, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 interface ActiveTrade {
   id: string;

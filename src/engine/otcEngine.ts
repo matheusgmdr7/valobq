@@ -292,25 +292,27 @@ class OTCSymbolEngine {
     
     // Inverter para ordem cronológica
     rawCandles.reverse();
-    
-    // Ajustar para que o ÚLTIMO candle feche exatamente em anchorPrice
-    // Isso garante continuidade perfeita com os live ticks
-    if (rawCandles.length > 0) {
-      const lastClose = rawCandles[rawCandles.length - 1].close;
-      if (lastClose > 0 && anchorPrice > 0) {
-        const ratio = anchorPrice / lastClose;
-        for (let i = 0; i < rawCandles.length; i++) {
-          const weight = i / rawCandles.length;
-          const adj = 1 + (ratio - 1) * weight;
-          
-          rawCandles[i].open *= adj;
-          rawCandles[i].high *= adj;
-          rawCandles[i].low *= adj;
-          rawCandles[i].close *= adj;
-        }
-      }
+
+    // Garantir continuidade OHLC: open de cada candle = close do anterior
+    for (let i = 1; i < rawCandles.length; i++) {
+      const prevClose = rawCandles[i - 1].close;
+      rawCandles[i].open = prevClose;
+      rawCandles[i].high = Math.max(rawCandles[i].high, rawCandles[i].open, rawCandles[i].close);
+      rawCandles[i].low = Math.min(rawCandles[i].low, rawCandles[i].open, rawCandles[i].close);
     }
-    
+
+    // Último candle fecha exatamente no preço-âncora (continuidade histórico → live)
+    if (rawCandles.length > 0) {
+      const lastIdx = rawCandles.length - 1;
+      const last = rawCandles[lastIdx];
+      const prevClose = lastIdx > 0 ? rawCandles[lastIdx - 1].close : anchorPrice;
+
+      last.open = prevClose;
+      last.close = anchorPrice;
+      last.high = Math.max(last.open, last.close, last.high);
+      last.low = Math.min(last.open, last.close, last.low);
+    }
+
     return rawCandles;
   }
 
@@ -436,6 +438,16 @@ export class OTCEngineManager {
     const engine = this.engines.get(symbol);
     if (engine) {
       engine.updateBasePrice(newPrice);
+    }
+  }
+
+  /**
+   * Força preço imediato (re-anchor após TwelveData → OTC)
+   */
+  forcePrice(symbol: string, newPrice: number): void {
+    const engine = this.engines.get(symbol);
+    if (engine) {
+      engine.forcePrice(newPrice);
     }
   }
 

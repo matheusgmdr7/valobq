@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Building2, Save, Upload, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { uploadImageToStorage, removeImageFromStorage, isSupabaseStorageUrl } from '@/lib/supabaseStorage';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 import { ImageCropper } from '@/components/ImageCropper';
 
 export default function BrokerDataPage() {

@@ -12,6 +12,8 @@
  * - Crypto: 24/7 (sempre aberto)
  */
 
+import { isForexSyntheticOnly } from '@/config/forexData';
+
 export type MarketCategory = 'forex' | 'crypto' | 'stocks' | 'commodities' | 'indices';
 
 export interface MarketStatus {
@@ -101,7 +103,8 @@ function isCommoditiesOpen(utcDay: number, utcTime: number): boolean {
 }
 
 /**
- * Retorna status completo do mercado para uma categoria
+ * Retorna status completo do mercado para uma categoria.
+ * isOTC reflete apenas horário/dia de mercado fechado (badge na UI), não a fonte de dados.
  */
 export function getMarketStatus(category: MarketCategory, now?: Date): MarketStatus {
   const open = isMarketOpen(category, now);
@@ -133,10 +136,11 @@ export function getMarketStatus(category: MarketCategory, now?: Date): MarketSta
 }
 
 /**
- * Verifica se um símbolo deve usar OTC
- * Retorna true se o mercado está fechado para essa categoria
+ * Verifica se um símbolo deve usar dados sintéticos (OTC Engine).
+ * Forex sintético usa motor OTC sempre; demais categorias só quando o mercado está fechado.
  */
 export function shouldUseOTC(category: MarketCategory, now?: Date): boolean {
   if (category === 'crypto') return false;
+  if (category === 'forex' && isForexSyntheticOnly()) return true;
   return !isMarketOpen(category, now);
 }

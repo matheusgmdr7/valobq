@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Edit, Trash2, X, Save, Power, PowerOff } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 interface PaymentGateway {
   id: string;

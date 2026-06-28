@@ -3,19 +3,19 @@
  * 
  * Single Source of Truth (SSoT) para dados de mercado
  * 
- * Arquitetura simplificada:
- * - Crypto: Binance WebSocket (kline_1m) → broadcast direto
- * - Forex (mercado aberto): TwelveData WebSocket → broadcast direto
- * - Forex (WS falha ou sem key): Motor Sintético OTC → broadcast direto
- * - Forex (mercado fechado): Motor Sintético OTC → broadcast direto
+ * Arquitetura:
+ * - Crypto: Binance WebSocket (kline_1m) → broadcast direto (já traz OHLC + isClosed)
+ * - Forex/OTC: Motor Sintético (padrão) ou TwelveData WS se FOREX_SYNTHETIC_ONLY=false → KlineAggregator 1m
  */
 
 import WebSocket from 'ws';
 import { createClient, RedisClientType } from 'redis';
 import { marketService } from '../services/marketService';
 import { OTCEngineManager, OTCTick } from '../engine/otcEngine';
+import { KlineAggregator } from '../engine/klineAggregator';
+import { resolveAnchorPrice, resolveAnchorPriceSync } from '../services/anchorPrice';
 import { shouldUseOTC, getMarketStatus, MarketCategory } from '../utils/marketHours';
-import { PRICE_DEFAULTS } from '../config/priceDefaults';
+import { isForexSyntheticOnly } from '../config/forexData';
 
 try {
   const dotenv = require('dotenv');
@@ -58,9 +58,27 @@ const upstreamConnections = new Map<string, UpstreamConnection>();
 const lastConnectionAttempt = new Map<string, number>();
 const CONNECTION_COOLDOWN = 60000;
 
+const tickCounter = new Map<string, number>();
+
+// Agregador 1m — forex/OTC passam por aqui antes do broadcast (mesmo formato Binance)
+let klineAggregator!: KlineAggregator;
+
+function ingestForexTick(tick: {
+  symbol: string;
+  price: number;
+  timestamp?: number;
+  bid?: number;
+  ask?: number;
+  change?: number;
+  changePercent?: number;
+  isOTC?: boolean;
+}): void {
+  klineAggregator.ingest(tick);
+}
+
 // ===== OTC Engine =====
 const otcManager = new OTCEngineManager((otcTick: OTCTick) => {
-  const canonicalTick: CanonicalTick = {
+  ingestForexTick({
     symbol: otcTick.symbol,
     price: otcTick.price,
     timestamp: otcTick.timestamp,
@@ -69,38 +87,53 @@ const otcManager = new OTCEngineManager((otcTick: OTCTick) => {
     change: otcTick.change,
     changePercent: otcTick.changePercent,
     isOTC: true,
-  };
-  processTickOTC(canonicalTick);
+  });
 });
 
 const lastRealPrices = new Map<string, number>();
 
-/**
- * Processa tick OTC — broadcast direto para clientes subscritos
- */
-async function processTickOTC(tick: CanonicalTick): Promise<void> {
-  if (!tick.symbol || !tick.price || !isFinite(tick.price)) return;
-  
-  await saveToRedis(tick);
-  
-  const message = JSON.stringify({ type: 'tick', data: tick });
-  
-  clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      const subscriptions = clientSubscriptions.get(client);
-      if (subscriptions && subscriptions.has(tick.symbol)) {
-        try {
-          client.send(message);
-        } catch {
-          clients.delete(client);
-          clientSubscriptions.delete(client);
-        }
-      }
-    }
-  });
+/** Re-ancora preço OTC + agregador (TwelveData → OTC ou refinamento async) */
+function reanchorSymbol(symbol: string, price: number, isOTC = true): void {
+  if (!price || !isFinite(price) || price <= 0) return;
+  lastRealPrices.set(symbol, price);
+  if (otcManager.isActive(symbol)) {
+    otcManager.forcePrice(symbol, price);
+  }
+  klineAggregator.seed(symbol, price, { isOTC });
 }
 
-const tickCounter = new Map<string, number>();
+/**
+ * Inicia ou re-ancora motor sintético (OTC Engine) para forex.
+ * anchorOverride: último preço TwelveData ao fazer fallback WS → OTC.
+ */
+function startSyntheticForex(symbol: string, anchorOverride?: number): void {
+  const pair = marketService.getPair(symbol);
+  const category = (pair?.category || 'forex') as string;
+
+  const cached = anchorOverride ?? lastRealPrices.get(symbol);
+  const { price: syncPrice, source: syncSource } = resolveAnchorPriceSync(symbol, cached);
+  const anchor = syncPrice;
+
+  if (otcManager.isActive(symbol)) {
+    console.log(`[Synthetic] Re-anchor ${symbol} @ ${anchor.toFixed(5)} (${anchorOverride ? 'twelvedata-fallback' : syncSource})`);
+    reanchorSymbol(symbol, anchor, true);
+    return;
+  }
+
+  console.log(`[Synthetic] Motor sintético para ${symbol} @ ${anchor.toFixed(5)} (${syncSource})`);
+  otcManager.startSymbol(symbol, category, anchor);
+  otcManager.forcePrice(symbol, anchor);
+  klineAggregator.seed(symbol, anchor, { isOTC: true });
+  lastRealPrices.set(symbol, anchor);
+
+  resolveAnchorPrice(symbol).then(({ price: apiPrice, source }) => {
+    if (apiPrice <= 0 || !otcManager.isActive(symbol)) return;
+    const diff = Math.abs(apiPrice - anchor) / anchor;
+    if (diff <= 0.002) return;
+    console.log(`[Synthetic] Re-anchor async ${symbol}: ${anchor.toFixed(5)} → ${apiPrice.toFixed(5)} (${source})`);
+    reanchorSymbol(symbol, apiPrice, true);
+  }).catch(() => {});
+}
 
 // ===== REDIS =====
 let redisClient: RedisClientType | null = null;
@@ -226,63 +259,22 @@ function connectBinance(symbol: string): void {
  */
 function connectForex(symbol: string): void {
   const twelvedataApiKey = process.env.TWELVEDATA_API_KEY;
-  
-  console.log(`[Forex] Iniciando conexão para ${symbol} (TwelveData key: ${twelvedataApiKey ? 'sim' : 'não'})`);
-  
-  if (twelvedataApiKey) {
-    connectTwelveData(symbol, twelvedataApiKey);
-  } else {
-    console.log(`[Forex] Sem API key, usando motor sintético para ${symbol}`);
+  const forexSyntheticOnly = isForexSyntheticOnly();
+
+  console.log(
+    `[Forex] ${symbol} — synthetic-only: ${forexSyntheticOnly} (TwelveData key: ${twelvedataApiKey ? 'sim' : 'não'})`
+  );
+
+  if (forexSyntheticOnly || !twelvedataApiKey) {
     startSyntheticForex(symbol);
+  } else {
+    connectTwelveData(symbol, twelvedataApiKey);
   }
-}
-
-/**
- * Inicia o motor sintético (OTC Engine) para um símbolo forex.
- * Gera ticks realistas via Ornstein-Uhlenbeck.
- */
-// PRICE_DEFAULTS importado de @/config/priceDefaults (compartilhado com API histórica)
-
-function startSyntheticForex(symbol: string): void {
-  if (otcManager.isActive(symbol)) return;
-  
-  const pair = marketService.getPair(symbol);
-  const category = (pair?.category || 'forex') as string;
-
-  const cachedPrice = lastRealPrices.get(symbol);
-  if (cachedPrice && cachedPrice > 0) {
-    console.log(`[Synthetic] Motor sintético para ${symbol} @ ${cachedPrice.toFixed(5)} (cache)`);
-    otcManager.startSymbol(symbol, category, cachedPrice);
-    return;
-  }
-
-  // Iniciar IMEDIATAMENTE com preço default para nunca deixar sem dados
-  const defaultPrice = PRICE_DEFAULTS[symbol] || 100.0;
-  console.log(`[Synthetic] Motor sintético para ${symbol} @ ${defaultPrice} (default)`);
-  otcManager.startSymbol(symbol, category, defaultPrice);
-  
-  // Em paralelo, buscar preço real e corrigir se diferente
-  fetchLastPriceForOTC(symbol, category).then(apiPrice => {
-    if (apiPrice > 0) {
-      const diff = Math.abs(apiPrice - defaultPrice) / defaultPrice;
-      if (diff > 0.01) {
-        // Diferença grande (>1%): parar e reiniciar com preço correto
-        lastRealPrices.set(symbol, apiPrice);
-        console.log(`[Synthetic] Reset de ${symbol}: ${defaultPrice} → ${apiPrice.toFixed(5)} (diff ${(diff*100).toFixed(1)}%)`);
-        otcManager.stopSymbol(symbol);
-        otcManager.startSymbol(symbol, category, apiPrice);
-      } else if (diff > 0.002) {
-        // Diferença pequena: transição suave
-        lastRealPrices.set(symbol, apiPrice);
-        otcManager.updateBasePrice(symbol, apiPrice);
-      }
-    }
-  }).catch(() => {});
 }
 
 /**
  * Conecta ao TwelveData WebSocket para Forex.
- * Se falhar ou não receber dados em 30s → startSyntheticForex.
+ * Se falhar ou não receber dados em 15s → startSyntheticForex.
  */
 function connectTwelveData(symbol: string, apiKey: string): void {
   const lastAttempt = lastConnectionAttempt.get(`twelvedata:${symbol}`);
@@ -338,7 +330,7 @@ function connectTwelveData(symbol: string, apiKey: string): void {
             cleanup();
             if (ws) ws.close();
             upstreamConnections.delete(`twelvedata:${symbol}`);
-            startSyntheticForex(symbol);
+            startSyntheticForex(symbol, lastPrice > 0 ? lastPrice : undefined);
           }
         }, 15000);
         
@@ -378,7 +370,7 @@ function connectTwelveData(symbol: string, apiKey: string): void {
               cleanup();
               if (ws) ws.close();
               upstreamConnections.delete(`twelvedata:${symbol}`);
-              startSyntheticForex(symbol);
+              startSyntheticForex(symbol, lastPrice > 0 ? lastPrice : undefined);
             }
             return;
           }
@@ -389,7 +381,7 @@ function connectTwelveData(symbol: string, apiKey: string): void {
             cleanup();
             if (ws) ws.close();
             upstreamConnections.delete(`twelvedata:${symbol}`);
-            startSyntheticForex(symbol);
+            startSyntheticForex(symbol, lastPrice > 0 ? lastPrice : undefined);
             return;
           }
           
@@ -418,14 +410,17 @@ function connectTwelveData(symbol: string, apiKey: string): void {
               ? (rawTimestamp < 1e12 ? rawTimestamp * 1000 : rawTimestamp)
               : Date.now();
             
-            const canonicalTick: CanonicalTick = {
-              symbol, price, timestamp: tickTimestamp, change, changePercent,
+            lastPrice = price;
+            ingestForexTick({
+              symbol,
+              price,
+              timestamp: tickTimestamp,
+              change,
+              changePercent,
               bid: parseFloat(message.bid || message.bid_price || message.data?.bid || price.toString()),
               ask: parseFloat(message.ask || message.ask_price || message.data?.ask || price.toString()),
-            };
-
-            lastPrice = price;
-            processTick(canonicalTick);
+              isOTC: false,
+            });
           }
         } catch {
           console.error('[TwelveData] Erro ao processar mensagem');
@@ -443,7 +438,7 @@ function connectTwelveData(symbol: string, apiKey: string): void {
         if (!receivedPriceData) {
           console.log(`[TwelveData] Sem dados de preço para ${symbol}, usando motor sintético direto`);
           upstreamConnections.delete(`twelvedata:${symbol}`);
-          startSyntheticForex(symbol);
+          startSyntheticForex(symbol, lastPrice > 0 ? lastPrice : undefined);
           return;
         }
         
@@ -459,12 +454,12 @@ function connectTwelveData(symbol: string, apiKey: string): void {
         } else {
           console.log(`[TwelveData] Reconexão esgotada para ${symbol}, usando motor sintético`);
           upstreamConnections.delete(`twelvedata:${symbol}`);
-          startSyntheticForex(symbol);
+          startSyntheticForex(symbol, lastPrice > 0 ? lastPrice : undefined);
         }
       });
     } catch {
       console.error('[TwelveData] Erro ao conectar WebSocket, usando motor sintético');
-      startSyntheticForex(symbol);
+      startSyntheticForex(symbol, lastPrice > 0 ? lastPrice : undefined);
     }
   };
 
@@ -523,78 +518,10 @@ async function processTick(tick: CanonicalTick): Promise<void> {
   });
 }
 
-// ===== HELPERS =====
-
-async function getLastPriceFromRedis(symbol: string): Promise<number> {
-  try {
-    if (!redisClient) return 0;
-    const key = `market:${symbol}:latest`;
-    const data = await redisClient.get(key);
-    if (data) {
-      const parsed = JSON.parse(data);
-      return parsed.price || 0;
-    }
-    return 0;
-  } catch { return 0; }
-}
-
-async function fetchLastPriceForOTC(symbol: string, category: string): Promise<number> {
-  try {
-    const apiKey = process.env.TWELVEDATA_API_KEY;
-    if (!apiKey) {
-      console.log(`[OTC] Sem API key TwelveData, usando default para ${symbol}`);
-      return 0;
-    }
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    
-    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      console.log(`[OTC] API price retornou ${response.status} para ${symbol}`);
-      return 0;
-    }
-    
-    const data: any = await response.json();
-    if (data.code && data.code !== 200) {
-      console.log(`[OTC] API price erro para ${symbol}: ${data.message || data.code}`);
-      return 0;
-    }
-    const price = parseFloat(data.price);
-    if (isFinite(price) && price > 0) {
-      console.log(`[OTC] Preço obtido via API price para ${symbol}: ${price}`);
-      return price;
-    }
-    
-    console.log(`[OTC] API price retornou valor inválido para ${symbol}, tentando time_series...`);
-    const controller2 = new AbortController();
-    const timeoutId2 = setTimeout(() => controller2.abort(), 5000);
-    
-    const tsUrl = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1day&outputsize=1&timezone=UTC&apikey=${apiKey}&format=json`;
-    const tsResponse = await fetch(tsUrl, { signal: controller2.signal });
-    clearTimeout(timeoutId2);
-    
-    if (!tsResponse.ok) return 0;
-    
-    const tsData: any = await tsResponse.json();
-    if (tsData.values && tsData.values.length > 0) {
-      const tsPrice = parseFloat(tsData.values[0].close) || 0;
-      if (tsPrice > 0) console.log(`[OTC] Preço obtido via time_series para ${symbol}: ${tsPrice}`);
-      return tsPrice;
-    }
-    return 0;
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      console.error(`[OTC] Timeout ao buscar preço para ${symbol}`);
-    } else {
-      console.error(`[OTC] Erro ao buscar preço para ${symbol}:`, err.message);
-    }
-    return 0;
-  }
-}
+// Inicializar agregador após processTick estar definido
+klineAggregator = new KlineAggregator((tick) => {
+  void processTick(tick as CanonicalTick);
+});
 
 // ===== SERVIDOR WEBSOCKET =====
 
@@ -663,7 +590,7 @@ function startServer(): void {
             }
           } else if (useOTC) {
             if (!otcManager.isActive(symbol)) {
-              startSyntheticForex(symbol);
+              startSyntheticForex(symbol, lastPrice > 0 ? lastPrice : undefined);
             }
           } else {
             // Mercado aberto: TwelveData WS → fallback motor sintético
@@ -678,6 +605,7 @@ function startServer(): void {
         } else if (data.type === 'unsubscribe') {
           const subscriptions = clientSubscriptions.get(ws);
           if (subscriptions) subscriptions.delete(data.symbol);
+          klineAggregator.resetSymbol(data.symbol);
         }
       } catch {
         console.error('[MarketDataServer] Erro ao processar mensagem');

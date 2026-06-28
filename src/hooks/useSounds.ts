@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
 // Sistema de sons usando Web Audio API (sem arquivos externos)
 class SoundEngine {
@@ -35,26 +35,73 @@ class SoundEngine {
     return this.enabled;
   }
 
-  // Som de clique (curto, sutil)
-  playClick() {
+  /** Impulso de ruído ultra-curto — base de clique seco (sem tom). */
+  private createClickImpulse(ctx: AudioContext, durationSec: number): AudioBuffer {
+    const sampleRate = ctx.sampleRate;
+    const length = Math.max(1, Math.floor(sampleRate * durationSec));
+    const buffer = ctx.createBuffer(1, length, sampleRate);
+    const channel = buffer.getChannelData(0);
+
+    for (let i = 0; i < length; i++) {
+      const x = 1 - i / length;
+      // Decaimento cúbico: ataque instantâneo, cauda quase zero — evita sensação de batida
+      channel[i] = (Math.random() * 2 - 1) * x * x * x;
+    }
+
+    return buffer;
+  }
+
+  private playClickImpulse(ctx: AudioContext, startTime: number, durationSec: number, volume: number): void {
+    const source = ctx.createBufferSource();
+    source.buffer = this.createClickImpulse(ctx, durationSec);
+
+    const highpass = ctx.createBiquadFilter();
+    highpass.type = 'highpass';
+    highpass.frequency.value = 5200;
+    highpass.Q.value = 0.5;
+
+    const gain = ctx.createGain();
+    gain.gain.value = volume;
+
+    source.connect(highpass);
+    highpass.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(startTime);
+  }
+
+  /** Clique de mouse — dois micro-impulsos secos (switch mecânico), sem tom. */
+  playUiClick() {
     if (!this.enabled) return;
     const ctx = this.getContext();
     if (!ctx) return;
 
+    const t = ctx.currentTime;
+    // Downstroke + upstroke do switch (~0,8 ms aparte) = um único "tick" seco
+    this.playClickImpulse(ctx, t, 0.003, 0.2);
+    this.playClickImpulse(ctx, t + 0.0008, 0.002, 0.09);
+  }
+
+  /** Confirmação de operação (COMPRAR / VENDER) — tom tonal distinto do clique de UI. */
+  playTradeClick() {
+    if (!this.enabled) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
 
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(800, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.08);
+    osc.frequency.setValueAtTime(880, t);
+    osc.frequency.exponentialRampToValueAtTime(660, t + 0.1);
 
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.18, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
 
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.1);
+    osc.start(t);
+    osc.stop(t + 0.12);
   }
 
   // Som de vitória (ascendente, alegre)
@@ -156,6 +203,26 @@ function getSoundEngine(): SoundEngine {
   return soundEngineInstance;
 }
 
+/** Toca som de clique quando o alvo (ou ancestral) for um `<button>` habilitado. */
+export function playClickFromEvent(
+  e: ReactMouseEvent<HTMLElement>,
+  sounds: { playUiClick: () => void; playTradeClick: () => void },
+): void {
+  const target = e.target;
+  if (!(target instanceof Element)) return;
+
+  const button = target.closest('button');
+  if (!button || button.disabled) return;
+  if (button.hasAttribute('data-no-click-sound')) return;
+  if (button.closest('[data-no-click-sound]')) return;
+
+  if (button.hasAttribute('data-trade-click')) {
+    sounds.playTradeClick();
+  } else {
+    sounds.playUiClick();
+  }
+}
+
 export function useSounds() {
   const engineRef = useRef<SoundEngine>(getSoundEngine());
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -173,8 +240,12 @@ export function useSounds() {
     });
   }, []);
 
-  const playClick = useCallback(() => {
-    engineRef.current.playClick();
+  const playUiClick = useCallback(() => {
+    engineRef.current.playUiClick();
+  }, []);
+
+  const playTradeClick = useCallback(() => {
+    engineRef.current.playTradeClick();
   }, []);
 
   const playWin = useCallback(() => {
@@ -188,7 +259,8 @@ export function useSounds() {
   return {
     soundEnabled,
     toggleSound,
-    playClick,
+    playUiClick,
+    playTradeClick,
     playWin,
     playLoss,
   };

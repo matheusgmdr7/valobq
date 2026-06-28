@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Search, DollarSign, FileText, X, ArrowUpRight, ArrowDownRight, Clock, RefreshCw, ChevronDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import toast from 'react-hot-toast';
+import toast from '@/lib/adminToast';
 
 interface User {
   id: string;
