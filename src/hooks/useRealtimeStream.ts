@@ -69,6 +69,8 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const lastMessageAtRef = useRef(Date.now());
+  const hiddenSinceRef = useRef<number | null>(null);
   // CRÍTICO: Prevenir dupla conexão causada pelo React Strict Mode
   const isInitializedRef = useRef(false);
   const isConnectingRef = useRef(false);
@@ -115,6 +117,7 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
         logger.log('✅ [useRealtimeStream] Conectado ao MarketDataServer');
         setIsConnected(true);
         setError(null);
+        lastMessageAtRef.current = Date.now();
         reconnectAttemptsRef.current = 0;
         isConnectingRef.current = false; // Marcar como não conectando mais
 
@@ -129,6 +132,7 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
       };
 
       ws.onmessage = (event) => {
+        lastMessageAtRef.current = Date.now();
         try {
           const message = JSON.parse(event.data);
 
@@ -430,6 +434,68 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
     };
   }, [symbol, isConnected, subscribe, unsubscribe]);
 
+  /**
+   * Ao voltar à aba: reconectar se o WS caiu ou ficou stale (browser congela pong em background).
+   */
+  useEffect(() => {
+    const forceReconnect = () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+
+      const ws = wsRef.current;
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close(1000, 'Resync after visibility');
+        }
+        wsRef.current = null;
+      }
+
+      setIsConnected(false);
+      isConnectingRef.current = false;
+      isInitializedRef.current = false;
+      reconnectAttemptsRef.current = 0;
+      currentSubscribedSymbolRef.current = null;
+      connect();
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        hiddenSinceRef.current = Date.now();
+        return;
+      }
+
+      const hiddenMs = hiddenSinceRef.current ? Date.now() - hiddenSinceRef.current : 0;
+      hiddenSinceRef.current = null;
+
+      const ws = wsRef.current;
+      const staleMs = Date.now() - lastMessageAtRef.current;
+      const needsReconnect =
+        !ws ||
+        ws.readyState !== WebSocket.OPEN ||
+        staleMs > 15000 ||
+        hiddenMs > 5000;
+
+      if (needsReconnect) {
+        logger.log(`🔄 [useRealtimeStream] Resync após aba visível (hidden=${hiddenMs}ms, stale=${staleMs}ms)`);
+        forceReconnect();
+        return;
+      }
+
+      if (symbolRef.current) {
+        currentSubscribedSymbolRef.current = null;
+        subscribe(symbolRef.current);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [connect, subscribe]);
 
   return {
     isConnected,

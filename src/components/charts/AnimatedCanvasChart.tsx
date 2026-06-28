@@ -358,6 +358,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     const isDataReadyRef = useRef(false); // Só true quando há dados históricos suficientes
     const firstTickAfterHistoryRef = useRef(true); // Flag para sincronizar primeiro ticket após histórico
     const lastProcessedTickRef = useRef<number | null>(null); // Rastrear último tick processado (por timestamp)
+    const hiddenSinceRef = useRef<number | null>(null);
+    const isResyncingRef = useRef(false);
+    const loadHistoricalDataRef = useRef<((options?: { background?: boolean }) => Promise<void>) | null>(null);
     
     // CRYPTO: Detectar se o ativo é crypto (recebe isClosed da Binance)
     const isCryptoAssetRef = useRef(false);
@@ -950,6 +953,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
     /** Virada de período sincronizada com currentTime (mesma base do timer lateral MM:SS) */
     const rolloverLiveCandleByClock = useCallback((nowMs: number) => {
+      if (document.hidden || isResyncingRef.current) return;
       if (!historicalDataLoadedRef.current || candlesRef.current.length === 0) return;
 
       const chartPeriod = getBarTime(nowMs, timeframe);
@@ -1097,45 +1101,25 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
     // Virada de candle pelo relógio — sincronizada com o timer lateral (MM:SS) e currentTime do gráfico
     useEffect(() => {
-      if (!currentTime) return;
+      if (!currentTime || document.hidden || isResyncingRef.current) return;
       rolloverLiveCandleByClock(currentTime.getTime());
     }, [currentTime, rolloverLiveCandleByClock]);
 
-    // Handler de visibilidade da página - ao voltar à aba, resetar motor de física
-    // para evitar saltos e gaps causados por ticks acumulados enquanto a aba estava inativa
-    useEffect(() => {
-      const handleVisibility = () => {
-        if (document.hidden) return;
-        
-        const engine = candleEngineRef.current;
-        if (engine.realPrice > 0) {
-          engine.visualPrice = engine.realPrice;
-          engine.velocity = 0;
-          engine.inertia = 0;
-          engine.lastFrameTime = performance.now();
-          engine.lastTickTime = Date.now();
-        }
-        
-        // Sincronizar live candle com o preço real mais recente
-        if (liveCandleRef.current && engine.realPrice > 0) {
-          liveCandleRef.current.close = engine.realPrice;
-          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, engine.realPrice);
-          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, engine.realPrice);
-          clearLiveCandleCache();
-        }
-      };
-
-      document.addEventListener('visibilitychange', handleVisibility);
-      return () => document.removeEventListener('visibilitychange', handleVisibility);
-    }, [clearLiveCandleCache]);
-
     /**
      * Carrega dados históricos
+     * @param background — resync ao voltar à aba (mantém candles visíveis durante o fetch)
      */
-    const loadHistoricalData = async (): Promise<void> => {
-      isLoadingRef.current = true; // Iniciar estado de carregamento
-      historicalDataLoadedRef.current = false; // Resetar flag de dados carregados
-      liveCandleRef.current = null; // Resetar live candle ao trocar de ativo
+    const loadHistoricalData = async (options?: { background?: boolean }): Promise<void> => {
+      const background = options?.background ?? false;
+
+      if (!background) {
+        isLoadingRef.current = true;
+        historicalDataLoadedRef.current = false;
+        liveCandleRef.current = null;
+        syncChartLoadingState();
+      } else {
+        isResyncingRef.current = true;
+      }
       
       // Detectar crypto por símbolo (refinado quando ticks trazem isClosed)
       const cryptoBases = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'DOT', 'MATIC', 'LINK', 'LTC', 'AVAX', 'UNI', 'ATOM', 'SHIB', 'TRX'];
@@ -1157,6 +1141,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         } else {
           const data = await response.json();
           if (data.candles && data.candles.length > 0) {
+            if (background) {
+              liveCandleRef.current = null;
+            }
             // Converter candles recebidos da API
             const rawCandles = data.candles.map((candle: any) => ({
               time: candle.time * 1000, // Converter de segundos para ms
@@ -1275,10 +1262,59 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         candlesRef.current = [];
       } finally {
         historicalDataLoadedRef.current = true;
-        isLoadingRef.current = false; // Finalizar estado de carregamento
+        isLoadingRef.current = false;
+        isResyncingRef.current = false;
         syncChartLoadingState();
       }
     };
+
+    loadHistoricalDataRef.current = loadHistoricalData;
+
+    // Ao voltar à aba: resincronizar histórico e resetar motor (evita linha plana de candles fantasma)
+    useEffect(() => {
+      const handleVisibility = () => {
+        if (document.hidden) {
+          hiddenSinceRef.current = Date.now();
+          return;
+        }
+
+        const hiddenMs = hiddenSinceRef.current ? Date.now() - hiddenSinceRef.current : 0;
+        hiddenSinceRef.current = null;
+
+        const engine = candleEngineRef.current;
+        if (engine.realPrice > 0) {
+          engine.visualPrice = engine.realPrice;
+          engine.velocity = 0;
+          engine.inertia = 0;
+          engine.lastFrameTime = performance.now();
+        }
+
+        if (hiddenMs > 3000 && loadHistoricalDataRef.current) {
+          lastProcessedTickRef.current = null;
+          firstTickAfterHistoryRef.current = true;
+          void loadHistoricalDataRef.current({ background: true }).finally(() => {
+            if (engine.realPrice > 0) {
+              engine.lastTickTime = Date.now();
+            }
+            if (liveCandleRef.current && engine.realPrice > 0) {
+              liveCandleRef.current.close = engine.realPrice;
+              liveCandleRef.current.high = Math.max(liveCandleRef.current.high, engine.realPrice);
+              liveCandleRef.current.low = Math.min(liveCandleRef.current.low, engine.realPrice);
+              clearLiveCandleCache();
+            }
+          });
+        } else if (liveCandleRef.current && engine.realPrice > 0) {
+          engine.lastTickTime = Date.now();
+          liveCandleRef.current.close = engine.realPrice;
+          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, engine.realPrice);
+          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, engine.realPrice);
+          clearLiveCandleCache();
+        }
+      };
+
+      document.addEventListener('visibilitychange', handleVisibility);
+      return () => document.removeEventListener('visibilitychange', handleVisibility);
+    }, [clearLiveCandleCache]);
 
     /**
      * Interpola suavemente entre dois valores com easing ease-out para movimento "vivo" e natural
@@ -6551,20 +6587,21 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             }
           }}
         />
-        {error && (
+        {error && isConnected && (
           <div className="absolute top-2 right-2 bg-red-500/20 border border-red-500/40 text-red-200 px-3 py-1.5 rounded-none text-sm backdrop-blur-sm">
             Erro de conexão: {error}
           </div>
         )}
-        {!isConnected && (
-          <div className="absolute top-2 right-2 bg-orange-500/20 border border-orange-500/40 text-orange-200 px-3 py-1.5 rounded-none text-sm backdrop-blur-sm">
-            Conectando...
-          </div>
-        )}
-        {showChartLoading && loadingVariant === 'compact' && (
+        {loadingVariant === 'compact' && (showChartLoading || !isConnected) && (
           <ChartLoadingScreen
             variant="compact"
-            message="Carregando dados do mercado..."
+            message={
+              showChartLoading
+                ? 'Carregando dados do mercado...'
+                : error
+                  ? 'Reconectando ao servidor...'
+                  : 'Conectando ao servidor...'
+            }
           />
         )}
       </div>
