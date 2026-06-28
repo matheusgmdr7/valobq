@@ -12,7 +12,7 @@
  * - Crypto: 24/7 (sempre aberto)
  */
 
-import { isForexSyntheticOnly } from '@/config/forexData';
+import { isCategorySyntheticOnly } from '@/config/syntheticData';
 
 export type MarketCategory = 'forex' | 'crypto' | 'stocks' | 'commodities' | 'indices';
 
@@ -137,10 +137,10 @@ export function getMarketStatus(category: MarketCategory, now?: Date): MarketSta
 
 /**
  * Verifica se um símbolo deve usar dados sintéticos (OTC Engine).
- * Forex sintético usa motor OTC sempre; demais categorias só quando o mercado está fechado.
+ * Forex, ações e commodities sintéticos usam motor OTC sempre; demais categorias só quando o mercado está fechado.
  */
 export function shouldUseOTC(category: MarketCategory, now?: Date): boolean {
   if (category === 'crypto') return false;
-  if (category === 'forex' && isForexSyntheticOnly()) return true;
+  if (isCategorySyntheticOnly(category)) return true;
   return !isMarketOpen(category, now);
 }

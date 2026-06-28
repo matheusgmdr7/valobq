@@ -5,7 +5,7 @@
  * 
  * Arquitetura:
  * - Crypto: Binance WebSocket (kline_1m) → broadcast direto (já traz OHLC + isClosed)
- * - Forex/OTC: Motor Sintético (padrão) ou TwelveData WS se FOREX_SYNTHETIC_ONLY=false → KlineAggregator 1m
+ * - Forex/Ações/Commodities: Motor Sintético (padrão) ou TwelveData WS se *_SYNTHETIC_ONLY=false → KlineAggregator 1m
  */
 
 import WebSocket from 'ws';
@@ -15,7 +15,7 @@ import { OTCEngineManager, OTCTick } from '../engine/otcEngine';
 import { KlineAggregator } from '../engine/klineAggregator';
 import { resolveAnchorPrice, resolveAnchorPriceSync } from '../services/anchorPrice';
 import { shouldUseOTC, getMarketStatus, MarketCategory } from '../utils/marketHours';
-import { isForexSyntheticOnly } from '../config/forexData';
+import { isCategorySyntheticOnly } from '../config/syntheticData';
 
 try {
   const dotenv = require('dotenv');
@@ -259,13 +259,15 @@ function connectBinance(symbol: string): void {
  */
 function connectForex(symbol: string): void {
   const twelvedataApiKey = process.env.TWELVEDATA_API_KEY;
-  const forexSyntheticOnly = isForexSyntheticOnly();
+  const pair = marketService.getPair(symbol);
+  const category = (pair?.category || 'forex') as MarketCategory;
+  const syntheticOnly = isCategorySyntheticOnly(category);
 
   console.log(
-    `[Forex] ${symbol} — synthetic-only: ${forexSyntheticOnly} (TwelveData key: ${twelvedataApiKey ? 'sim' : 'não'})`
+    `[Forex] ${symbol} (${category}) — synthetic-only: ${syntheticOnly} (TwelveData key: ${twelvedataApiKey ? 'sim' : 'não'})`
   );
 
-  if (forexSyntheticOnly || !twelvedataApiKey) {
+  if (syntheticOnly || !twelvedataApiKey) {
     startSyntheticForex(symbol);
   } else {
     connectTwelveData(symbol, twelvedataApiKey);

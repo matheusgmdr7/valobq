@@ -4,14 +4,14 @@
  * Busca dados históricos de:
  * - Binance (crypto) - sempre dados reais
  * - OTC Engine (sintético) - forex (padrão) e mercado fechado
- * - Twelve Data (forex/stocks/indices/commodities) - apenas se FOREX_SYNTHETIC_ONLY=false e mercado aberto
+ * - Twelve Data (forex/stocks/indices/commodities) - apenas se *_SYNTHETIC_ONLY=false e mercado aberto
  * 
  * A API key fica no servidor, não exposta no cliente
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { shouldUseOTC, MarketCategory, isMarketOpen } from '@/utils/marketHours';
-import { isForexSyntheticOnly } from '@/config/forexData';
+import { isCategorySyntheticOnly } from '@/config/syntheticData';
 import { OTCEngineManager } from '@/engine/otcEngine';
 import { resolveAnchorPrice } from '@/services/anchorPrice';
 
@@ -319,7 +319,7 @@ async function generateOTCHistorical(
     };
     const intervalMs = intervalMsMap[timeframe] || 60000;
 
-    const skipTwelveData = category === 'forex' && isForexSyntheticOnly();
+    const skipTwelveData = isCategorySyntheticOnly(category);
     const { price: basePrice, source: anchorSource } = await resolveAnchorPrice(symbol, { skipTwelveData });
 
     const otcMgr = new OTCEngineManager(() => {});

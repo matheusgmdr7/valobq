@@ -89,7 +89,7 @@ async function fetchTwelveDataPrice(symbol: string): Promise<number> {
 }
 
 export interface ResolveAnchorPriceOptions {
-  /** Pula TwelveData (forex sintético) — Redis → default apenas */
+  /** Pula TwelveData (categorias sintéticas) — Redis → default apenas */
   skipTwelveData?: boolean;
 }
 
