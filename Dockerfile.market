@@ -10,7 +10,8 @@ RUN npm ci
 # Copiar código fonte necessário
 COPY src/server/ ./src/server/
 COPY src/services/ ./src/services/
-COPY src/engine/otcEngine.ts ./src/engine/otcEngine.ts
+COPY src/engine/ ./src/engine/
+COPY src/config/ ./src/config/
 COPY src/utils/ ./src/utils/
 COPY src/types/ ./src/types/
 COPY src/lib/ ./src/lib/
