@@ -435,7 +435,7 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
   }, [symbol, isConnected, subscribe, unsubscribe]);
 
   /**
-   * Ao voltar à aba: reconectar se o WS caiu ou ficou stale (browser congela pong em background).
+   * Ao voltar à aba: sempre reconectar (browser congela WS/ticks em background).
    */
   useEffect(() => {
     const forceReconnect = () => {
@@ -451,7 +451,7 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
         ws.onerror = null;
         ws.onclose = null;
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-          ws.close(1000, 'Resync after visibility');
+          ws.close(1000, 'Reload after visibility');
         }
         wsRef.current = null;
       }
@@ -470,32 +470,18 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
         return;
       }
 
-      const hiddenMs = hiddenSinceRef.current ? Date.now() - hiddenSinceRef.current : 0;
+      if (hiddenSinceRef.current === null) return;
+
+      const hiddenMs = Date.now() - hiddenSinceRef.current;
       hiddenSinceRef.current = null;
 
-      const ws = wsRef.current;
-      const staleMs = Date.now() - lastMessageAtRef.current;
-      const needsReconnect =
-        !ws ||
-        ws.readyState !== WebSocket.OPEN ||
-        staleMs > 15000 ||
-        hiddenMs > 5000;
-
-      if (needsReconnect) {
-        logger.log(`🔄 [useRealtimeStream] Resync após aba visível (hidden=${hiddenMs}ms, stale=${staleMs}ms)`);
-        forceReconnect();
-        return;
-      }
-
-      if (symbolRef.current) {
-        currentSubscribedSymbolRef.current = null;
-        subscribe(symbolRef.current);
-      }
+      logger.log(`🔄 [useRealtimeStream] Reconectando após aba visível (hidden=${hiddenMs}ms)`);
+      forceReconnect();
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [connect, subscribe]);
+  }, [connect]);
 
   return {
     isConnected,

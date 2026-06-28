@@ -395,7 +395,6 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     const isDataReadyRef = useRef(false); // Só true quando há dados históricos suficientes
     const firstTickAfterHistoryRef = useRef(true); // Flag para sincronizar primeiro ticket após histórico
     const lastProcessedTickRef = useRef<number | null>(null); // Rastrear último tick processado (por timestamp)
-    const hiddenSinceRef = useRef<number | null>(null);
     const isResyncingRef = useRef(false);
     const loadHistoricalDataRef = useRef<((options?: { background?: boolean }) => Promise<void>) | null>(null);
     
@@ -1306,52 +1305,6 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     };
 
     loadHistoricalDataRef.current = loadHistoricalData;
-
-    // Ao voltar à aba: resincronizar histórico e resetar motor (evita linha plana de candles fantasma)
-    useEffect(() => {
-      const handleVisibility = () => {
-        if (document.hidden) {
-          hiddenSinceRef.current = Date.now();
-          return;
-        }
-
-        const hiddenMs = hiddenSinceRef.current ? Date.now() - hiddenSinceRef.current : 0;
-        hiddenSinceRef.current = null;
-
-        const engine = candleEngineRef.current;
-        if (engine.realPrice > 0) {
-          engine.visualPrice = engine.realPrice;
-          engine.velocity = 0;
-          engine.inertia = 0;
-          engine.lastFrameTime = performance.now();
-        }
-
-        if (hiddenMs > 3000 && loadHistoricalDataRef.current) {
-          lastProcessedTickRef.current = null;
-          firstTickAfterHistoryRef.current = true;
-          void loadHistoricalDataRef.current({ background: true }).finally(() => {
-            if (engine.realPrice > 0) {
-              engine.lastTickTime = Date.now();
-            }
-            if (liveCandleRef.current && engine.realPrice > 0) {
-              liveCandleRef.current.close = engine.realPrice;
-              liveCandleRef.current.high = Math.max(liveCandleRef.current.high, engine.realPrice);
-              liveCandleRef.current.low = Math.min(liveCandleRef.current.low, engine.realPrice);
-              clearLiveCandleCache();
-            }
-          });
-        } else if (liveCandleRef.current && engine.realPrice > 0) {
-          engine.lastTickTime = Date.now();
-          liveCandleRef.current.close = engine.realPrice;
-          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, engine.realPrice);
-          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, engine.realPrice);
-          clearLiveCandleCache();
-        }
-      };
-
-      document.addEventListener('visibilitychange', handleVisibility);
-      return () => document.removeEventListener('visibilitychange', handleVisibility);
-    }, [clearLiveCandleCache]);
 
     /**
      * Interpola suavemente entre dois valores com easing ease-out para movimento "vivo" e natural

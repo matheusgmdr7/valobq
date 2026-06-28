@@ -153,19 +153,18 @@ const TradingPage: React.FC = () => {
     [playUiClick, playTradeClick],
   );
 
-  // Auto-reload quando o usuário volta à página após inatividade (evita candles desordenados)
+  // Remonta o gráfico ao voltar à aba (evita candles congelados/desordenados após background)
+  const [chartReloadKey, setChartReloadKey] = useState(0);
+
   useEffect(() => {
-    let hiddenAt: number | null = null;
-    const INACTIVE_THRESHOLD = 30_000; // 30 segundos
+    let wasHidden = false;
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        hiddenAt = Date.now();
-      } else if (hiddenAt && Date.now() - hiddenAt > INACTIVE_THRESHOLD) {
-        hiddenAt = null;
-        window.location.reload();
-      } else {
-        hiddenAt = null;
+        wasHidden = true;
+      } else if (wasHidden) {
+        wasHidden = false;
+        setChartReloadKey((k) => k + 1);
       }
     };
 
@@ -3845,7 +3844,7 @@ const TradingPage: React.FC = () => {
               <div className="relative w-full h-full" data-chart-container style={{ height: '100%', width: '100%', position: leftPanelOpen && leftPanelWidth > 0 ? 'absolute' : 'relative', top: leftPanelOpen && leftPanelWidth > 0 ? '0' : 'auto', paddingBottom: leftPanelOpen && leftPanelWidth > 0 ? '1.5rem' : '0' }}>
                 <AnimatedCanvasChart
                           ref={chartRef}
-                  key={`${selectedAsset}-${selectedTimeframe}-${chartType}-canvas`}
+                  key={`${selectedAsset}-${selectedTimeframe}-${chartType}-canvas-${chartReloadKey}`}
                   symbol={selectedAsset}
                   timeframe={selectedTimeframe}
                   className="absolute inset-0"
