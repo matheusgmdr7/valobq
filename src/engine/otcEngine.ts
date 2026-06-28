@@ -24,18 +24,27 @@ export interface OTCConfig {
   maxTrendStrength: number;
   /** Duração média de uma micro-tendência em ticks */
   trendDurationTicks: number;
+  /** Fração de ticks em consolidação lateral (padrão 0.4) */
+  trendIdleProbability?: number;
+  /** Peso do último delta no momentum (padrão 0.2) */
+  momentumCarry?: number;
+  /** Escala do momentum no preço (padrão 0.3) */
+  momentumScale?: number;
 }
 
 /** Configurações por categoria de ativo */
 const OTC_CONFIGS: Record<string, OTCConfig> = {
   forex: {
-    // Calibrado para ~3-5 pips/min em EUR/USD (1.19): sqrt(100)*0.00002*1.19 ≈ 2.4 pips random
-    volatility: 0.00002,
-    meanReversionSpeed: 0.003,
-    tickIntervalMs: 600,
+    // ~8–12 pips/min em EUR/USD — mais movimento visível, ainda dentro de faixa realista
+    volatility: 0.00005,
+    meanReversionSpeed: 0.0018,
+    tickIntervalMs: 450,
     spreadPercent: 0.001,
-    maxTrendStrength: 0.000008,
-    trendDurationTicks: 80,
+    maxTrendStrength: 0.00002,
+    trendDurationTicks: 110,
+    trendIdleProbability: 0.28,
+    momentumCarry: 0.28,
+    momentumScale: 0.42,
   },
   stocks: {
     volatility: 0.0001,
@@ -165,36 +174,46 @@ class OTCSymbolEngine {
    * Gera um tick sintético usando modelo Ornstein-Uhlenbeck com micro-tendências
    */
   private generateTick(): void {
-    const { volatility, meanReversionSpeed, maxTrendStrength, trendDurationTicks, spreadPercent } = this.config;
-    
+    const {
+      volatility,
+      meanReversionSpeed,
+      maxTrendStrength,
+      trendDurationTicks,
+      spreadPercent,
+      trendIdleProbability = 0.4,
+      momentumCarry = 0.2,
+      momentumScale = 0.3,
+    } = this.config;
+
+    const idleHalf = trendIdleProbability / 2;
+
     // 1. Atualizar micro-tendência
     if (this.trendTicksLeft <= 0) {
-      // Iniciar nova micro-tendência
       const rand = this.nextRandom();
-      if (rand < 0.3) {
-        this.trendDirection = -1; // Tendência de baixa
-      } else if (rand > 0.7) {
-        this.trendDirection = 1;  // Tendência de alta
+      if (rand < idleHalf) {
+        this.trendDirection = -1;
+      } else if (rand > 1 - idleHalf) {
+        this.trendDirection = 1;
       } else {
-        this.trendDirection = 0;  // Sem tendência (consolidação)
+        this.trendDirection = 0;
       }
       this.trendStrength = this.nextRandom() * maxTrendStrength;
       this.trendTicksLeft = Math.floor(this.nextRandom() * trendDurationTicks) + 5;
     }
     this.trendTicksLeft--;
-    
+
     // 2. Componente de tendência
     const trendComponent = this.trendDirection * this.trendStrength * this.currentPrice;
-    
+
     // 3. Componente de reversão à média (Ornstein-Uhlenbeck)
     const meanReversionComponent = meanReversionSpeed * (this.meanPrice - this.currentPrice);
-    
+
     // 4. Componente aleatório (ruído gaussiano)
     const randomComponent = this.gaussianRandom() * volatility * this.currentPrice;
-    
-    // 5. Momentum (inércia do movimento anterior) - fator reduzido para evitar impulsos
-    this.momentum = this.momentum * 0.5 + (this.currentPrice - this.lastPrice) * 0.2;
-    const momentumComponent = this.momentum * 0.3;
+
+    // 5. Momentum (inércia do movimento anterior)
+    this.momentum = this.momentum * 0.5 + (this.currentPrice - this.lastPrice) * momentumCarry;
+    const momentumComponent = this.momentum * momentumScale;
     
     // 6. Calcular novo preço
     this.lastPrice = this.currentPrice;
