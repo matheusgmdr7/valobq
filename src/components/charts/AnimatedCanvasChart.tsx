@@ -313,6 +313,43 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     
     // Ref para armazenar posições dos botões de fechar dos snapshots
     const snapshotCloseButtonsRef = useRef<Map<string, { x: number; y: number; size: number; tradeId: string }>>(new Map());
+    const isCoarsePointerRef = useRef(false);
+    const onCloseSnapshotRef = useRef(onCloseSnapshot);
+
+    useEffect(() => {
+      onCloseSnapshotRef.current = onCloseSnapshot;
+    }, [onCloseSnapshot]);
+
+    useEffect(() => {
+      isCoarsePointerRef.current = window.matchMedia('(pointer: coarse)').matches;
+    }, []);
+
+    const tryCloseSnapshotAtClient = useCallback((clientX: number, clientY: number): boolean => {
+      const canvas = canvasRef.current;
+      const handler = onCloseSnapshotRef.current;
+      if (!canvas || !handler) return false;
+
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+
+      for (const [tradeId, button] of snapshotCloseButtonsRef.current.entries()) {
+        if (x >= button.x && x <= button.x + button.size &&
+            y >= button.y && y <= button.y + button.size) {
+          handler(tradeId);
+          setHoveredCloseButton(null);
+          return true;
+        }
+      }
+      return false;
+    }, []);
+
+    const tryCloseSnapshotAtClientRef = useRef(tryCloseSnapshotAtClient);
+    useEffect(() => {
+      tryCloseSnapshotAtClientRef.current = tryCloseSnapshotAtClient;
+    }, [tryCloseSnapshotAtClient]);
     
     // Ref para armazenar posições dos snapshots (para desabilitar pan quando mouse estiver sobre eles)
     const snapshotPositionsRef = useRef<Map<string, { x: number; y: number; width: number; height: number; tradeId: string }>>(new Map());
@@ -3231,7 +3268,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           
           // Botão de fechar (apenas quando o trade tem resultado - expirado)
           if (showCloseButton) {
-            const btnSize = 20; // Botão maior para facilitar clique
+            const coarse = isCoarsePointerRef.current;
+            const btnSize = coarse ? 28 : 20;
             const closeButtonX = constrainedX + balloonWidth - btnSize - 5;
             const closeButtonY = constrainedY + (balloonHeight - btnSize) / 2;
             
@@ -3257,7 +3295,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             
             // Armazenar posição do botão com área MUITO expandida para facilitar clique
             // Usando coordenadas do centro do botão e tamanho maior
-            const hitAreaExpand = 10;
+            const hitAreaExpand = coarse ? 18 : 10;
             snapshotCloseButtonsRef.current.set(trade.id, {
               x: closeButtonX - hitAreaExpand,
               y: closeButtonY - hitAreaExpand,
@@ -6244,6 +6282,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       let lastTouchDistance = 0;
       let isTouching = false;
       let touchMoved = false;
+      let touchStartX = 0;
+      let touchStartY = 0;
 
       const getTouchPos = (touch: Touch): { offsetX: number; offsetY: number } => {
         const rect = canvas.getBoundingClientRect();
@@ -6267,6 +6307,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         }
 
         if (e.touches.length === 1) {
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
           const pos = getTouchPos(e.touches[0]);
           const syntheticEvent = new MouseEvent('mousedown', {
             clientX: e.touches[0].clientX,
@@ -6281,9 +6323,20 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         }
       };
 
+      const TAP_THRESHOLD_PX = 12;
+
       const handleTouchMove = (e: TouchEvent) => {
         e.preventDefault();
-        touchMoved = true;
+
+        if (e.touches.length === 1) {
+          const dx = e.touches[0].clientX - touchStartX;
+          const dy = e.touches[0].clientY - touchStartY;
+          if (Math.sqrt(dx * dx + dy * dy) > TAP_THRESHOLD_PX) {
+            touchMoved = true;
+          }
+        } else {
+          touchMoved = true;
+        }
 
         if (e.touches.length === 2) {
           // Pinch-to-zoom
@@ -6325,6 +6378,12 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const handleTouchEnd = (e: TouchEvent) => {
         e.preventDefault();
         lastTouchDistance = 0;
+
+        if (e.changedTouches.length === 1 && !touchMoved) {
+          const touch = e.changedTouches[0];
+          tryCloseSnapshotAtClientRef.current(touch.clientX, touch.clientY);
+        }
+
         if (isTouching) {
           handleMouseUp();
           isTouching = false;
@@ -6565,26 +6624,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             setIsOverSnapshot(false);
           }}
           onClick={(e) => {
-            const canvas = canvasRef.current;
-            if (!canvas || !onCloseSnapshot) return;
-            
-            // IMPORTANTE: NÃO multiplicar por scale porque as coordenadas do botão
-            // são armazenadas em coordenadas "lógicas" (antes da escala DPR)
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            
-            // Verificar se o clique foi em algum botão de fechar
-            for (const [tradeId, button] of snapshotCloseButtonsRef.current.entries()) {
-              // Verificar se o clique está dentro da área do botão
-              const isInsideButton = x >= button.x && x <= button.x + button.size &&
-                                     y >= button.y && y <= button.y + button.size;
-              
-              if (isInsideButton) {
-                onCloseSnapshot(tradeId);
-                break;
-              }
-            }
+            tryCloseSnapshotAtClient(e.clientX, e.clientY);
           }}
         />
         {error && isConnected && (

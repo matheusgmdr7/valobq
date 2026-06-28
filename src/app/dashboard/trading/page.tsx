@@ -267,18 +267,25 @@ const TradingPage: React.FC = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
 
-  // Detect mobile screen size and orientation
+  // Detect mobile (inclui phones em landscape — largura pode passar de 768px)
   useEffect(() => {
     const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
+      const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+      const minSide = Math.min(window.innerWidth, window.innerHeight);
+      const mobileViewport =
+        window.innerWidth < 768 ||
+        (coarsePointer && minSide < 520) ||
+        (coarsePointer && window.innerWidth < 1024 && window.innerHeight < 500);
+      setIsMobile(mobileViewport);
       setIsLandscape(window.innerWidth > window.innerHeight);
     };
     checkMobile();
     window.addEventListener('resize', checkMobile);
-    window.addEventListener('orientationchange', () => setTimeout(checkMobile, 100));
+    const onOrientationChange = () => setTimeout(checkMobile, 150);
+    window.addEventListener('orientationchange', onOrientationChange);
     return () => {
       window.removeEventListener('resize', checkMobile);
-      window.removeEventListener('orientationchange', checkMobile);
+      window.removeEventListener('orientationchange', onOrientationChange);
     };
   }, []);
 
@@ -342,8 +349,20 @@ const TradingPage: React.FC = () => {
   );
 
   const mobileTradePanelRef = useRef<HTMLDivElement>(null);
+  const mobileHeaderRef = useRef<HTMLDivElement>(null);
   const [mobileTradePanelHeight, setMobileTradePanelHeight] = useState(132);
-  const mobileHeaderHeight = isLandscape ? 58 : 108;
+  const [mobileHeaderHeight, setMobileHeaderHeight] = useState(108);
+  const mobileBottomTabHeight = isLandscape ? 'min(42vh, 200px)' : 'min(35vh, 260px)';
+
+  useEffect(() => {
+    if (!isMobile || !mobileHeaderRef.current) return;
+    const el = mobileHeaderRef.current;
+    const update = () => setMobileHeaderHeight(el.getBoundingClientRect().height);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isMobile, isLandscape]);
 
   useEffect(() => {
     if (!isMobile || !mobileTradePanelRef.current) return;
@@ -1793,7 +1812,7 @@ const TradingPage: React.FC = () => {
       onClickCapture={handleUiButtonClick}
     >
       {/* Top Bar - Modelo da Referência */}
-      <div className={`absolute top-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-b border-gray-900/50 px-2 py-1.5 md:px-4 md:py-3.5 ${isMobile && isLandscape ? 'py-1' : ''}`}>
+      <div ref={mobileHeaderRef} className={`absolute top-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-b border-gray-900/50 px-2 py-1.5 md:px-4 md:py-3.5 ${isMobile && isLandscape ? 'py-1' : ''}`}>
         {/* Linha 1: Logo + User Info + Saldo + Depositar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 md:space-x-4 flex-1 min-w-0">
@@ -1808,8 +1827,36 @@ const TradingPage: React.FC = () => {
               </div>
             )}
 
+            {isMobile && isLandscape && (
+              <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1 min-w-0 mx-1">
+                {assets.map((asset) => (
+                  <button
+                    key={`landscape-${asset.symbol}`}
+                    type="button"
+                    onClick={() => setSelectedAsset(asset.symbol)}
+                    className={`flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap touch-manipulation ${
+                      selectedAsset === asset.symbol
+                        ? 'bg-gray-700 text-white border border-gray-600'
+                        : 'bg-gray-900/80 text-gray-400 border border-gray-800/50'
+                    }`}
+                  >
+                    {asset.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setShowAddPairModal(true)}
+                  className="flex-shrink-0 p-1 text-gray-400 hover:text-white rounded border border-gray-700/50 touch-manipulation"
+                  aria-label="Adicionar par"
+                >
+                  <Plus className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
             {/* Asset Tabs - Desktop: inline / Mobile: segunda linha */}
-            <div className="hidden md:flex items-center space-x-2 overflow-x-auto overflow-y-visible pb-2 scrollbar-hide">
+            {!isMobile && (
+            <div className="flex items-center space-x-2 overflow-x-auto overflow-y-visible pb-2 scrollbar-hide">
               {assets.map((asset) => {
                 // Verificar se há trade ativo neste ativo
                 const assetActiveTrade = localActiveTrades.find(
@@ -2041,6 +2088,7 @@ const TradingPage: React.FC = () => {
                 </button>
               </div>
             </div>
+            )}
           </div>
 
           {/* User Info - Modelo da Referência */}
@@ -2131,8 +2179,9 @@ const TradingPage: React.FC = () => {
           </div>
         </div>
         
-        {/* Linha 2 - Mobile Only: Asset Tabs em linha separada */}
-        <div className={`md:hidden flex items-center space-x-1.5 overflow-x-auto scrollbar-hide ${isLandscape ? 'mt-0.5 pb-0.5' : 'mt-1 pb-1'} px-0.5`}>
+        {/* Linha 2 - Mobile portrait: abas de ativos */}
+        {isMobile && !isLandscape && (
+        <div className={`flex items-center space-x-1.5 overflow-x-auto scrollbar-hide ${isLandscape ? 'mt-0.5 pb-0.5' : 'mt-1 pb-1'} px-0.5`}>
           {assets.map((asset) => {
             const assetActiveTrade = localActiveTrades.find(
               t => t.symbol === asset.symbol && !t.result && t.expiration > Date.now()
@@ -2258,17 +2307,19 @@ const TradingPage: React.FC = () => {
             <Plus className="w-3.5 h-3.5" />
           </button>
         </div>
+        )}
       </div>
 
-      <div className="flex md:pt-14 md:pb-12 overflow-hidden" style={{
+      <div className={`flex overflow-hidden ${isMobile ? '' : 'md:pt-14 md:pb-12'}`} style={{
         height: isMobile
-          ? `calc(100dvh - ${mobileHeaderHeight}px - ${mobileTradePanelHeight}px${showBottomTab ? ' - min(35vh, 260px)' : ''})`
+          ? `calc(100dvh - ${mobileHeaderHeight}px - ${mobileTradePanelHeight}px${showBottomTab ? ` - ${mobileBottomTabHeight}` : ''})`
           : '100vh',
         paddingTop: isMobile ? '0' : undefined,
         marginTop: isMobile ? `${mobileHeaderHeight}px` : undefined,
       }}>
         {/* Sidebar - Compacto com ícones modernos */}
-        <div className={`${sidebarCollapsed ? 'w-16' : 'w-20'} bg-black border-r border-gray-900 transition-all duration-300 hidden md:flex flex-col pt-6`} style={{ boxShadow: '2px 0 8px rgba(0, 0, 0, 0.5)' }}>
+        {!isMobile && (
+        <div className={`${sidebarCollapsed ? 'w-16' : 'w-20'} bg-black border-r border-gray-900 transition-all duration-300 flex flex-col pt-6`} style={{ boxShadow: '2px 0 8px rgba(0, 0, 0, 0.5)' }}>
           {!sidebarCollapsed && (
             <div className="flex-1 py-3 space-y-6 overflow-hidden">
               {/* Navegação - Ícones com títulos abaixo */}
@@ -2431,6 +2482,7 @@ const TradingPage: React.FC = () => {
             </div>
           )}
         </div>
+        )}
 
         {/* Main Chart Area - Ocupa todo o espaço restante */}
         <div className="flex-1 flex flex-col relative min-h-0">
@@ -3788,7 +3840,7 @@ const TradingPage: React.FC = () => {
           </div>
 
                 {/* Chart - Ocupa todo o espaço disponível */}
-                <div className={`flex-1 bg-black relative pb-0 md:pb-0 min-h-0 ${isMobile ? 'overflow-hidden' : 'overflow-visible'} flex`} style={{ minHeight: 0, marginLeft: leftPanelOpen && leftPanelWidth > 0 ? `${leftPanelWidth}px` : '0', paddingTop: isMobile ? '0' : '1.5rem', paddingBottom: '0', marginBottom: showBottomTab ? 'calc(25vh - 1rem)' : '0', transition: 'margin-bottom 0.3s ease-in-out, margin-left 0.3s' }}>
+                <div className={`flex-1 bg-black relative pb-0 md:pb-0 min-h-0 ${isMobile ? 'overflow-hidden' : 'overflow-visible'} flex`} style={{ minHeight: 0, marginLeft: leftPanelOpen && leftPanelWidth > 0 ? `${leftPanelWidth}px` : '0', paddingTop: isMobile ? '0' : '1.5rem', paddingBottom: '0', marginBottom: showBottomTab ? (isMobile ? mobileBottomTabHeight : 'calc(25vh - 1rem)') : '0', transition: 'margin-bottom 0.3s ease-in-out, margin-left 0.3s' }}>
                   <div className="flex-1 relative min-w-0" style={{ height: isMobile ? '100%' : (leftPanelOpen && leftPanelWidth > 0 ? 'calc(100vh - 1.5rem - 2rem)' : (showBottomTab ? 'calc(100% - 25vh + 1rem - 1.5rem)' : 'calc(100% - 1.5rem)')), width: '100%', maxHeight: isMobile ? 'none' : (leftPanelOpen && leftPanelWidth > 0 ? 'calc(100vh - 1.5rem - 2rem)' : (showBottomTab ? 'calc(100vh - 1.5rem - 25vh + 1rem - 2rem)' : 'none')), transition: 'height 0.3s ease-in-out, max-height 0.3s ease-in-out' }}>
               <div className="relative w-full h-full" data-chart-container style={{ height: '100%', width: '100%', position: leftPanelOpen && leftPanelWidth > 0 ? 'absolute' : 'relative', top: leftPanelOpen && leftPanelWidth > 0 ? '0' : 'auto', paddingBottom: leftPanelOpen && leftPanelWidth > 0 ? '1.5rem' : '0' }}>
                 <AnimatedCanvasChart
@@ -4465,7 +4517,8 @@ const TradingPage: React.FC = () => {
 
 
         {/* Right Trading Panel - Ultra Compacto */}
-        <div className="w-40 bg-black border-l border-gray-900 p-1.5 hidden md:block">
+        {!isMobile && (
+        <div className="w-40 bg-black border-l border-gray-900 p-1.5">
           <div className="space-y-2.5 pt-10">
             {/* Valor - Design Melhorado com Botões Internos */}
             <div className="bg-gray-800/60 border border-gray-800/50 p-2">
@@ -4604,6 +4657,8 @@ const TradingPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
       </div>
 
       <AddPairModal
@@ -4629,14 +4684,54 @@ const TradingPage: React.FC = () => {
       />
 
       {/* Mobile Trade Panel - Bottom */}
+      {isMobile && (
       <div
         ref={mobileTradePanelRef}
-        className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-black/98 backdrop-blur-md border-t border-gray-800/60 px-3 pt-2"
+        className="fixed bottom-0 left-0 right-0 z-50 bg-black/98 backdrop-blur-md border-t border-gray-800/60 px-2 sm:px-3 pt-1.5"
         style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}
       >
-        <div className={`grid gap-2 mb-2 ${isLandscape ? 'grid-cols-[1fr_1fr_auto_auto] items-center' : 'grid-cols-2'}`}>
+        {isLandscape ? (
+          <div className="flex items-stretch gap-1.5">
+            <div className="flex items-center bg-gray-800/90 rounded-lg overflow-hidden min-h-[40px] flex-[1.1] min-w-0">
+              <button type="button" onClick={() => adjustTradeValue(-10)} className="px-2 py-1.5 text-gray-400 active:bg-gray-700 touch-manipulation" aria-label="Diminuir valor">
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+              <div className="flex-1 flex items-center justify-center gap-0.5 min-w-0 px-0.5">
+                <span className="text-gray-400 text-[10px]">R$</span>
+                <input type="number" inputMode="numeric" value={tradeValue} onChange={(e) => setTradeValue(Math.max(10, parseInt(e.target.value, 10) || 10))} className="bg-transparent text-white font-bold text-xs outline-none w-full text-center min-w-0" style={{ caretColor: '#3b82f6', WebkitAppearance: 'none', MozAppearance: 'textfield' }} />
+              </div>
+              <button type="button" onClick={() => adjustTradeValue(10)} className="px-2 py-1.5 text-gray-400 active:bg-gray-700 touch-manipulation" aria-label="Aumentar valor">
+                <ChevronUp className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="flex items-center bg-gray-800/90 rounded-lg overflow-hidden min-h-[40px] flex-[1.1] min-w-0">
+              <button type="button" onClick={() => adjustExpirationMinutes(-1)} disabled={expirationTime.getTime() <= minimumExpiration.getTime()} className="px-2 py-1.5 text-gray-400 active:bg-gray-700 disabled:opacity-40 touch-manipulation" aria-label="Diminuir expiração">
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+              <div className="flex-1 flex flex-col items-center justify-center min-w-0">
+                <span className="text-white text-xs font-bold whitespace-nowrap">{expirationTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+              <button type="button" onClick={() => adjustExpirationMinutes(1)} className="px-2 py-1.5 text-gray-400 active:bg-gray-700 touch-manipulation" aria-label="Aumentar expiração">
+                <ChevronUp className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="flex items-center justify-center bg-gray-800/90 rounded-lg px-2 min-h-[40px] shrink-0">
+              <span className="text-emerald-400 text-[11px] font-bold whitespace-nowrap">+{profitPercent}%</span>
+            </div>
+            <button type="button" data-trade-click onClick={() => executeTrade('call')} onTouchStart={() => setBuyButtonHover(true)} onTouchEnd={() => setBuyButtonHover(false)} className="bg-green-600 active:bg-green-700 text-white min-h-[40px] flex-1 min-w-[72px] max-w-[120px] rounded-lg flex items-center justify-center gap-1 touch-manipulation">
+              <TrendingUp className="w-4 h-4" />
+              <span className="text-xs font-bold">COMPRAR</span>
+            </button>
+            <button type="button" data-trade-click onClick={() => executeTrade('put')} onTouchStart={() => setSellButtonHover(true)} onTouchEnd={() => setSellButtonHover(false)} className="bg-red-600 active:bg-red-700 text-white min-h-[40px] flex-1 min-w-[72px] max-w-[120px] rounded-lg flex items-center justify-center gap-1 touch-manipulation">
+              <TrendingDown className="w-4 h-4" />
+              <span className="text-xs font-bold">VENDER</span>
+            </button>
+          </div>
+        ) : (
+        <>
+        <div className="grid gap-2 mb-2 grid-cols-2">
           {/* Valor */}
-          <div className={`flex items-center bg-gray-800/90 rounded-lg overflow-hidden min-h-[44px] ${isLandscape ? '' : 'col-span-1'}`}>
+          <div className="flex items-center bg-gray-800/90 rounded-lg overflow-hidden min-h-[44px] col-span-1">
             <button
               type="button"
               onClick={() => adjustTradeValue(-10)}
@@ -4667,7 +4762,7 @@ const TradingPage: React.FC = () => {
           </div>
 
           {/* Expiração */}
-          <div className={`flex items-center bg-gray-800/90 rounded-lg overflow-hidden min-h-[44px] ${isLandscape ? '' : 'col-span-1'}`}>
+          <div className="flex items-center bg-gray-800/90 rounded-lg overflow-hidden min-h-[44px] col-span-1">
             <button
               type="button"
               onClick={() => adjustExpirationMinutes(-1)}
@@ -4696,7 +4791,7 @@ const TradingPage: React.FC = () => {
             </button>
           </div>
 
-          <div className={`flex items-center justify-center bg-gray-800/90 rounded-lg px-3 min-h-[44px] ${isLandscape ? '' : 'col-span-2'}`}>
+          <div className="flex items-center justify-center bg-gray-800/90 rounded-lg px-3 min-h-[44px] col-span-2">
             <span className="text-emerald-400 text-sm font-bold">+{profitPercent}%</span>
             <span className="text-gray-500 text-xs mx-2">·</span>
             <span className="text-emerald-400/90 text-xs">+R$ {profit.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
@@ -4727,13 +4822,16 @@ const TradingPage: React.FC = () => {
             <span className="text-sm font-bold">VENDER</span>
           </button>
         </div>
+        </>
+        )}
       </div>
+      )}
 
       {/* Aba Embaixo do Gráfico - Portfólio Total (Primeiro item do menu lateral) */}
       {showBottomTab && (
         <div className="fixed z-40 bg-black border-t border-gray-800 transition-all duration-300 overflow-hidden" style={{ 
-          height: isMobile ? '35vh' : '25vh', 
-          maxHeight: isMobile ? '260px' : '300px',
+          height: isMobile ? (isLandscape ? 'min(42vh, 200px)' : '35vh') : '25vh', 
+          maxHeight: isMobile ? (isLandscape ? 200 : 260) : 300,
           bottom: isMobile ? mobileTradePanelHeight : '3rem', 
           left: isMobile ? '0px' : `${sidebarCollapsed ? 64 : 80}px`,
           right: isMobile ? '0px' : '160px',
@@ -4744,7 +4842,8 @@ const TradingPage: React.FC = () => {
       )}
 
       {/* Bottom Bar - Compacta */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-t border-gray-900/50 px-4 py-1.5 hidden md:block">
+      {!isMobile && (
+      <div className="fixed bottom-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-t border-gray-900/50 px-4 py-1.5">
         <div className="flex items-center justify-between">
           {/* Lado Esquerdo - Suporte */}
           <div className="flex items-center space-x-3">
@@ -4810,6 +4909,7 @@ const TradingPage: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       {/* Menu do Usuário - Design igual ao modal de seleção de ativos */}
       {showUserMenu && (
