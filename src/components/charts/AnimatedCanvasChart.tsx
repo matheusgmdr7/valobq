@@ -1526,15 +1526,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       // Limpar cache de interpolação se o viewport mudou significativamente (pan ou zoom)
       const oldStartIndex = viewport.visibleStartIndex;
       
-      // CRÍTICO: Se estava no final (mostrando últimos candles), manter no final após ajuste
-      const wasAtEnd = viewport.isAtEnd || viewport.visibleStartIndex >= maxStartIndex - 1;
-      
-      if (wasAtEnd && candles.length > 0) {
-        // Sempre manter no final se estava no final
+      // Sem pan: sempre ancorar no último candle (modo ao vivo)
+      if (candles.length > 0) {
         viewport.visibleStartIndex = maxStartIndex;
         viewport.isAtEnd = true;
       } else {
-        // Ajustar normalmente se não estava no final
         viewport.visibleStartIndex = Math.max(0, Math.min(viewport.visibleStartIndex, maxStartIndex));
         viewport.isAtEnd = viewport.visibleStartIndex >= maxStartIndex - 1;
       }
@@ -5099,7 +5095,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     }, [symbol, timeframe, chartType, candleUpColor, candleDownColor, lineColor, lineStyle, lineWithShadow]);
 
 
-    // Handlers de interação (zoom, pan, crosshair)
+    // Handlers de interação (zoom e crosshair — pan desabilitado)
     useEffect(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -5142,47 +5138,12 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           newCandleCount = Math.max(1, Math.floor(calculatedCount));
         }
         
-        // Verificar se estava no final antes do zoom
-        const wasAtEnd = viewport.isAtEnd || viewport.visibleStartIndex >= candlesRef.current.length - viewport.visibleCandleCount - 1;
-        
-        // Se estava no final, sempre focar no último candle após zoom
-        if (wasAtEnd && candlesRef.current.length > 0) {
-          viewport.visibleCandleCount = newCandleCount;
+        // Sempre manter foco no último candle (sem pan/arraste horizontal)
+        viewport.visibleCandleCount = newCandleCount;
+        if (candlesRef.current.length > 0) {
           const newMaxStartIndex = Math.max(0, candlesRef.current.length - newCandleCount);
           viewport.visibleStartIndex = newMaxStartIndex;
           viewport.isAtEnd = true;
-          return;
-        }
-        
-        // Se não estava no final, fazer zoom no ponto do mouse
-        const rect = canvas.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const padding = { left: 60, right: 90 };
-        const chartWidth = rect.width - padding.left - padding.right;
-        
-        // Verificar se o mouse está sobre o gráfico
-        if (mouseX >= padding.left && mouseX <= rect.width - padding.right) {
-          const relativeX = (mouseX - padding.left) / chartWidth;
-          
-          const oldStartIndex = viewport.visibleStartIndex;
-          const oldCandleCount = viewport.visibleCandleCount;
-          const oldMouseIndex = oldStartIndex + relativeX * oldCandleCount;
-          
-          viewport.visibleCandleCount = newCandleCount;
-          const newMaxStartIndex = Math.max(0, candlesRef.current.length - newCandleCount);
-          
-          // Manter o ponto sob o mouse fixo
-          viewport.visibleStartIndex = Math.max(0, Math.min(
-            newMaxStartIndex,
-            Math.floor(oldMouseIndex - relativeX * newCandleCount)
-          ));
-          viewport.isAtEnd = viewport.visibleStartIndex >= newMaxStartIndex - 1;
-        } else {
-          // Se o mouse não está sobre o gráfico, apenas ajustar o zoom mantendo posição relativa
-          viewport.visibleCandleCount = newCandleCount;
-          const newMaxStartIndex = Math.max(0, candlesRef.current.length - newCandleCount);
-          viewport.visibleStartIndex = Math.max(0, Math.min(viewport.visibleStartIndex, newMaxStartIndex));
-          viewport.isAtEnd = viewport.visibleStartIndex >= newMaxStartIndex - 1;
         }
       };
 
@@ -5651,43 +5612,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           }
         }
         
-        // Verificar se o mouse está sobre um snapshot antes de iniciar pan
-        // IMPORTANTE: NÃO multiplicar por scale porque as coordenadas do snapshot/botão
-        // são armazenadas em coordenadas "lógicas" (antes da escala DPR)
-        const canvasRect = canvas.getBoundingClientRect();
-        const snapshotMouseX = e.clientX - canvasRect.left;
-        const snapshotMouseY = e.clientY - canvasRect.top;
-        
-        // Verificar se está sobre algum snapshot OU sobre algum botão de fechar
-        let isOverAnySnapshot = false;
-        for (const [tradeId, snapshot] of snapshotPositionsRef.current.entries()) {
-          if (snapshotMouseX >= snapshot.x && snapshotMouseX <= snapshot.x + snapshot.width &&
-              snapshotMouseY >= snapshot.y && snapshotMouseY <= snapshot.y + snapshot.height) {
-            isOverAnySnapshot = true;
-            break;
-          }
-        }
-        
-        // Verificar também se está sobre algum botão de fechar
-        if (!isOverAnySnapshot) {
-          for (const [tradeId, button] of snapshotCloseButtonsRef.current.entries()) {
-            if (snapshotMouseX >= button.x && snapshotMouseX <= button.x + button.size &&
-                snapshotMouseY >= button.y && snapshotMouseY <= button.y + button.size) {
-              isOverAnySnapshot = true;
-              break;
-            }
-          }
-        }
-        
-        // Se não está desenhando e não está sobre snapshot/botão, fazer pan normal
-        if (!isOverAnySnapshot) {
-          viewportRef.current.isDragging = true;
-          viewportRef.current.dragStartX = e.clientX;
-          viewportRef.current.dragStartIndex = viewportRef.current.visibleStartIndex;
-        } else {
-          // Garantir que o pan não seja iniciado se estiver sobre snapshot
-          viewportRef.current.isDragging = false;
-        }
+        // Pan desabilitado — apenas zoom in/out
+        viewportRef.current.isDragging = false;
       };
 
       // Handler de mouse move (pan, crosshair e desenho de ferramenta)
@@ -5964,44 +5890,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           return; // Não fazer pan quando desenhando
         }
 
-        // Verificar se está sobre snapshot durante o movimento (ANTES de processar o pan)
-        // IMPORTANTE: NÃO multiplicar por scale porque as coordenadas do snapshot
-        // são armazenadas em coordenadas "lógicas" (antes da escala DPR)
-        const moveRect = canvas.getBoundingClientRect();
-        const moveX = e.clientX - moveRect.left;
-        const moveY = e.clientY - moveRect.top;
-        
-        let isOverSnapshotDuringMove = false;
-        for (const [, snapshot] of snapshotPositionsRef.current.entries()) {
-          if (moveX >= snapshot.x && moveX <= snapshot.x + snapshot.width &&
-              moveY >= snapshot.y && moveY <= snapshot.y + snapshot.height) {
-            isOverSnapshotDuringMove = true;
-            break;
-          }
-        }
-        
-        // Se estiver sobre snapshot, NUNCA fazer pan
-        if (isOverSnapshotDuringMove) {
-          viewport.isDragging = false;
-          return; // Parar aqui, não processar pan
-        }
-        
-        // Só fazer pan se não estiver sobre snapshot
-        if (viewport.isDragging) {
-          // Pan normal
-          const deltaX = e.clientX - viewport.dragStartX;
-          const pixelsPerCandle = chartWidth / viewport.visibleCandleCount;
-          const deltaCandles = Math.round(deltaX / pixelsPerCandle);
-          
-          const newStartIndex = viewport.dragStartIndex - deltaCandles;
-          const maxStartIndex = Math.max(0, candlesRef.current.length - viewport.visibleCandleCount);
-          viewport.visibleStartIndex = Math.max(0, Math.min(newStartIndex, maxStartIndex));
-          // Atualizar flag isAtEnd baseado na posição atual
-          viewport.isAtEnd = viewport.visibleStartIndex >= maxStartIndex - 1;
-        }
+        // Pan desabilitado
+        viewport.isDragging = false;
       };
 
-      // Handler de mouse up (finalizar pan ou desenho)
+      // Handler de mouse up (finalizar desenho/ferramentas)
       const handleMouseUp = () => {
         // Parar arraste se estiver arrastando
         if (toolDraggingRef.current.isDragging || toolDraggingRef.current.toolId) {
@@ -6250,12 +6143,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           else canvas.style.cursor = 'move';
         } else if (toolDrawingRef.current.isDrawing) {
           canvas.style.cursor = 'crosshair';
-        } else if (viewport.isDragging) {
-          canvas.style.cursor = 'grabbing';
         } else if (selectedToolTypeRef.current) {
           canvas.style.cursor = 'crosshair';
         } else if (!isOverGraphicTool) {
-          canvas.style.cursor = 'grab';
+          canvas.style.cursor = 'default';
         }
       };
 
