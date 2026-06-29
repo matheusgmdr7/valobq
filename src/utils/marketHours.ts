@@ -137,7 +137,7 @@ export function getMarketStatus(category: MarketCategory, now?: Date): MarketSta
 
 /**
  * Verifica se um símbolo deve usar dados sintéticos (OTC Engine).
- * Forex, ações e commodities sintéticos usam motor OTC sempre; demais categorias só quando o mercado está fechado.
+ * Forex, ações, índices e commodities sintéticos usam motor OTC sempre; demais categorias só quando o mercado está fechado.
  */
 export function shouldUseOTC(category: MarketCategory, now?: Date): boolean {
   if (category === 'crypto') return false;

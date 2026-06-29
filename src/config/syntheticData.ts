@@ -14,6 +14,10 @@ export function isCommoditiesSyntheticOnly(): boolean {
   return process.env.COMMODITIES_SYNTHETIC_ONLY !== 'false';
 }
 
+export function isIndicesSyntheticOnly(): boolean {
+  return process.env.INDICES_SYNTHETIC_ONLY !== 'false';
+}
+
 export function isCategorySyntheticOnly(category: string): boolean {
   switch (category) {
     case 'forex':
@@ -22,6 +26,8 @@ export function isCategorySyntheticOnly(category: string): boolean {
       return isStocksSyntheticOnly();
     case 'commodities':
       return isCommoditiesSyntheticOnly();
+    case 'indices':
+      return isIndicesSyntheticOnly();
     default:
       return false;
   }

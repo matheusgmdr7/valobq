@@ -420,6 +420,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       friction: number;        // Resistência (0.7 a 0.9). Menor = mais pesado.
       acceleration: number;    // Atração (0.05 a 0.2). Maior = mais rápido.
       jitter: number;         // Intensidade do pulso de vida
+      idleWanderOffset: number; // Micro-movimento entre ticks (forex/OTC)
       lastTickTime: number;   // Timestamp do último ticket recebido
       lastFrameTime: number;  // Timestamp do último frame para Delta Time
     }>({
@@ -429,7 +430,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       inertia: 0,
       friction: 0.45,         // Mais resistência = menos derrapagem
       acceleration: 0.35,     // Atração forte = chega rápido ao alvo
-      jitter: 0.0000003,      // Micro-tremor mínimo
+      jitter: 0.0000003,      // Micro-tremor mínimo (crypto)
+      idleWanderOffset: 0,
       lastTickTime: Date.now(),
       lastFrameTime: performance.now()
     });
@@ -785,6 +787,21 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         attractionTarget = engine.realPrice + (snap.targetPrice - engine.realPrice) * snap.blend;
       }
 
+      const isNonCrypto = !isCryptoAssetRef.current;
+
+      // Forex/índices/commodities: micro-movimento contínuo entre ticks do servidor
+      if (isNonCrypto && engine.realPrice > 0) {
+        const maxWander = engine.realPrice * 0.00015;
+        if (Math.random() < 0.06 * dt) {
+          engine.idleWanderOffset += (Math.random() - 0.5) * engine.realPrice * 0.000025;
+        }
+        engine.idleWanderOffset *= Math.pow(0.965, dt);
+        engine.idleWanderOffset = Math.max(-maxWander, Math.min(maxWander, engine.idleWanderOffset));
+        if (!snap || snap.blend < 0.2) {
+          attractionTarget += engine.idleWanderOffset;
+        }
+      }
+
       // Calcular distância entre preço visual e alvo (mercado ou fechamento IMA)
       const priceDistance = Math.abs(attractionTarget - engine.visualPrice);
       const priceRange = engine.realPrice * 0.001; // 0.1% do preço como referência
@@ -795,18 +812,21 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         smoothingFactor = Math.max(smoothingFactor, engine.acceleration * 2.5);
       } else if (priceDistance > priceRange * 2) {
         smoothingFactor = engine.acceleration * 2.0;
-      } else if (priceDistance < priceRange * 0.05) {
+      } else if (priceDistance < priceRange * 0.05 && !isNonCrypto) {
         smoothingFactor = engine.acceleration * 0.15;
+      } else if (isNonCrypto && priceDistance < priceRange * 0.08) {
+        smoothingFactor = engine.acceleration * 0.55;
       }
 
       // 1. FORÇA DE ATRAÇÃO — direto ao alvo (mercado ou fechamento IMA)
       const attraction = (attractionTarget - engine.visualPrice) * (smoothingFactor * dt);
 
-      // 2. MICRO-PULSO — reduzido durante snap de fechamento
+      // 2. MICRO-PULSO — mais forte em forex/OTC para candle nunca parecer congelado
       let pulse = 0;
       const snapActive = snap && snap.blend > 0.2;
-      if (!snapActive && priceDistance < priceRange * 0.1) {
-        pulse = (Math.random() - 0.5) * (engine.realPrice * engine.jitter * dt);
+      const jitterScale = isNonCrypto ? 0.000018 : engine.jitter;
+      if (!snapActive && (priceDistance < priceRange * 0.2 || isNonCrypto)) {
+        pulse = (Math.random() - 0.5) * (engine.realPrice * jitterScale * dt * (isNonCrypto ? 2.2 : 1));
       }
 
       // 3. INÉRCIA REDUZIDA — quase nenhuma derrapagem
@@ -905,8 +925,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     
     // CRYPTO: Confirmar detecção via marketStatus (chega antes dos ticks)
     useEffect(() => {
-      if (marketStatus && marketStatus.category === 'crypto') {
+      if (marketStatus?.category === 'crypto') {
         isCryptoAssetRef.current = true;
+      } else if (marketStatus?.category) {
+        isCryptoAssetRef.current = false;
       }
     }, [marketStatus]);
 
@@ -1048,7 +1070,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         return;
       }
 
-      if (tick.isClosed !== undefined) {
+      if (marketStatus?.category === 'crypto') {
+        isCryptoAssetRef.current = true;
+      } else if (marketStatus?.category || tick.isOTC) {
+        isCryptoAssetRef.current = false;
+      } else if (tick.isClosed !== undefined) {
         isCryptoAssetRef.current = true;
       }
 
@@ -1132,8 +1158,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         }
       }
 
+      candleEngineRef.current.idleWanderOffset *= 0.4;
+
       if (onPriceUpdate) onPriceUpdate(tickPrice);
-    }, [lastTick, timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle]);
+    }, [lastTick, timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle, marketStatus]);
 
     // Virada de candle pelo relógio — sincronizada com o timer lateral (MM:SS) e currentTime do gráfico
     useEffect(() => {
