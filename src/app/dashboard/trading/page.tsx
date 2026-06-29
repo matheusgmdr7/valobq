@@ -266,15 +266,20 @@ const TradingPage: React.FC = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
 
-  // Detect mobile (inclui phones em landscape — largura pode passar de 768px)
+  // Detect mobile (landscape em phones: largura > 768px mas altura ~390px)
   useEffect(() => {
     const checkMobile = () => {
-      const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
       const minSide = Math.min(window.innerWidth, window.innerHeight);
+      const touchDevice =
+        window.matchMedia('(pointer: coarse)').matches ||
+        window.matchMedia('(hover: none)').matches ||
+        navigator.maxTouchPoints > 0;
+
       const mobileViewport =
+        minSide < 520 ||
         window.innerWidth < 768 ||
-        (coarsePointer && minSide < 520) ||
-        (coarsePointer && window.innerWidth < 1024 && window.innerHeight < 500);
+        (touchDevice && minSide < 720);
+
       setIsMobile(mobileViewport);
       setIsLandscape(window.innerWidth > window.innerHeight);
     };
@@ -1811,17 +1816,17 @@ const TradingPage: React.FC = () => {
       onClickCapture={handleUiButtonClick}
     >
       {/* Top Bar - Modelo da Referência */}
-      <div ref={mobileHeaderRef} className={`absolute top-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-b border-gray-900/50 px-2 py-1.5 md:px-4 md:py-3.5 ${isMobile && isLandscape ? 'py-1' : ''}`}>
+      <div ref={mobileHeaderRef} className={`absolute top-0 left-0 right-0 z-30 bg-black/95 backdrop-blur-sm border-b border-gray-900/50 ${isMobile ? (isLandscape ? 'px-2 py-0.5' : 'px-2 py-1.5') : 'px-2 py-1.5 md:px-4 md:py-3.5'}`}>
         {/* Linha 1: Logo + User Info + Saldo + Depositar */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2 md:space-x-4 flex-1 min-w-0">
+          <div className={`flex items-center flex-1 min-w-0 ${isMobile ? 'space-x-1.5' : 'space-x-2 md:space-x-4'}`}>
             {/* Logo */}
             {brokerLogo && (
               <div className="flex items-center space-x-2 flex-shrink-0">
                 <img 
                   src={brokerLogo} 
                   alt={brokerName}
-                  className="h-6 md:h-12 w-auto object-contain"
+                  className={`${isMobile ? (isLandscape ? 'h-5' : 'h-6') : 'h-6 md:h-12'} w-auto object-contain`}
                 />
               </div>
             )}
@@ -2091,7 +2096,7 @@ const TradingPage: React.FC = () => {
           </div>
 
           {/* User Info - Modelo da Referência */}
-          <div className="flex items-center space-x-1.5 md:space-x-3">
+          <div className={`flex items-center ${isMobile ? 'space-x-1' : 'space-x-1.5 md:space-x-3'}`}>
             {/* Avatar clicável com seta dropdown */}
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
@@ -2102,34 +2107,36 @@ const TradingPage: React.FC = () => {
                   <img
                     src={userPhoto}
                     alt={user.name}
-                    className="w-8 h-8 md:w-12 md:h-12 rounded-full object-cover border-2 border-gray-600"
+                    className={`${isMobile ? 'w-7 h-7' : 'w-8 h-8 md:w-12 md:h-12'} rounded-full object-cover border-2 border-gray-600`}
                   />
                 ) : (
-                  <div className="w-8 h-8 md:w-12 md:h-12 bg-gray-700 rounded-full flex items-center justify-center">
-                    <User className="w-4 h-4 md:w-7 md:h-7 text-gray-300" />
+                  <div className={`${isMobile ? 'w-7 h-7' : 'w-8 h-8 md:w-12 md:h-12'} bg-gray-700 rounded-full flex items-center justify-center`}>
+                    <User className={`${isMobile ? 'w-3.5 h-3.5' : 'w-4 h-4 md:w-7 md:h-7'} text-gray-300`} />
                   </div>
                 )}
-                <div className="absolute -top-0.5 -right-0.5 w-3 h-3 md:w-4 md:h-4 bg-green-500 rounded-full flex items-center justify-center border-2 border-black">
-                  <CheckCircle2 className="w-2 h-2 md:w-3 md:h-3 text-white" />
+                <div className={`absolute -top-0.5 -right-0.5 ${isMobile ? 'w-2.5 h-2.5' : 'w-3 h-3 md:w-4 md:h-4'} bg-green-500 rounded-full flex items-center justify-center border-2 border-black`}>
+                  <CheckCircle2 className={`${isMobile ? 'w-1.5 h-1.5' : 'w-2 h-2 md:w-3 md:h-3'} text-white`} />
                 </div>
               </div>
+              {!isMobile && (
               <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform hidden md:block ${showUserMenu ? 'rotate-180' : ''}`} />
+              )}
             </button>
             {/* Seletor Conta Demo / Real + Saldo */}
             <div className="relative">
               <button
                 onClick={() => setShowAccountDropdown(!showAccountDropdown)}
-                className="flex items-center gap-1 md:gap-2 px-1.5 md:px-3 py-1 md:py-1.5 rounded-lg transition-all hover:bg-white/5"
+                className={`flex items-center rounded-lg transition-all hover:bg-white/5 ${isMobile ? 'gap-0.5 px-1 py-0.5' : 'gap-1 md:gap-2 px-1.5 md:px-3 py-1 md:py-1.5'}`}
               >
                 <div className="text-left">
-                  <div className="text-[9px] md:text-[10px] uppercase tracking-wider text-gray-400 leading-none">
+                  <div className={`uppercase tracking-wider text-gray-400 leading-none ${isMobile ? 'text-[8px]' : 'text-[9px] md:text-[10px]'}`}>
                     {accountType === 'demo' ? 'Demo' : 'Real'}
                   </div>
-                  <div className={`text-sm md:text-lg font-bold leading-tight ${accountType === 'demo' ? 'text-blue-400' : 'text-green-400'}`}>
+                  <div className={`font-bold leading-tight ${isMobile ? 'text-xs' : 'text-sm md:text-lg'} ${accountType === 'demo' ? 'text-blue-400' : 'text-green-400'}`}>
                     R$ {activeBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </div>
                 </div>
-                <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showAccountDropdown ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`text-gray-400 transition-transform ${isMobile ? 'w-3 h-3' : 'w-3.5 h-3.5'} ${showAccountDropdown ? 'rotate-180' : ''}`} />
               </button>
 
               {showAccountDropdown && (
@@ -2171,7 +2178,7 @@ const TradingPage: React.FC = () => {
             </div>
             <button 
               onClick={() => setShowDepositModal(true)}
-              className="border border-green-500 text-white px-2.5 py-1.5 md:px-4 md:py-2 rounded text-xs md:text-sm font-medium hover:bg-green-500/10 transition-colors flex-shrink-0"
+              className={`border border-green-500 text-white rounded font-medium hover:bg-green-500/10 transition-colors flex-shrink-0 ${isMobile ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1.5 md:px-4 md:py-2 text-xs md:text-sm'}`}
             >
               Depositar
             </button>
@@ -2525,18 +2532,18 @@ const TradingPage: React.FC = () => {
             </div>
           )}
 
-          {/* Chart Header - Compacto e sobrepondo */}
-          <div className="absolute left-0 right-0 z-20 bg-transparent px-4 py-2 pointer-events-none" style={{ left: leftPanelOpen && leftPanelWidth > 0 ? `${leftPanelWidth}px` : '0', transition: 'left 0.3s', top: '1.5rem' }}>
+          {/* Chart Header - compacto em mobile landscape */}
+          <div className="absolute left-0 right-0 z-20 bg-transparent pointer-events-none" style={{ left: leftPanelOpen && leftPanelWidth > 0 ? `${leftPanelWidth}px` : '0', transition: 'left 0.3s', top: isMobile ? '0' : '1.5rem', padding: isMobile && isLandscape ? '0.125rem 0.5rem' : isMobile ? '0.25rem 0.5rem' : '0.5rem 1rem' }}>
             {/* Primeira linha: Ícone, Título e Botões */}
-            <div className="flex items-center justify-between mb-2 pointer-events-auto">
-              <div className="flex items-center space-x-3">
+            <div className={`flex items-center justify-between pointer-events-auto ${isMobile ? 'mb-0' : 'mb-2'}`}>
+              <div className={`flex items-center ${isMobile && isLandscape ? 'space-x-1.5' : 'space-x-3'}`}>
                 {/* Ícone do par */}
-                <div className="w-6 h-6 flex-shrink-0 relative">
+                <div className={`flex-shrink-0 relative ${isMobile && isLandscape ? 'w-4 h-4' : 'w-6 h-6'}`}>
                   {(() => {
                     const imageUrl = getCryptoImageUrl(selectedAsset);
                     if (!imageUrl) {
                       return (
-                        <div className="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                        <div className={`${isMobile && isLandscape ? 'w-4 h-4 text-[10px]' : 'w-6 h-6 text-xs'} bg-gray-600 rounded-full flex items-center justify-center text-white font-bold`}>
                           {selectedAsset.split('/')[0].charAt(0)}
                         </div>
                       );
@@ -2552,7 +2559,7 @@ const TradingPage: React.FC = () => {
                           const parent = target.parentElement;
                           if (parent && !parent.querySelector('.fallback-icon')) {
                             const fallback = document.createElement('div');
-                            fallback.className = 'fallback-icon w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center text-white text-xs font-bold';
+                            fallback.className = `fallback-icon ${isMobile && isLandscape ? 'w-4 h-4 text-[10px]' : 'w-6 h-6 text-xs'} bg-gray-600 rounded-full flex items-center justify-center text-white font-bold`;
                             fallback.textContent = selectedAsset.split('/')[0].charAt(0);
                             parent.appendChild(fallback);
                           }
@@ -2562,14 +2569,15 @@ const TradingPage: React.FC = () => {
                   })()}
                 </div>
                 
-                <h2 className="text-base font-semibold">{selectedAsset}</h2>
+                <h2 className={`font-semibold ${isMobile && isLandscape ? 'text-xs' : 'text-base'}`}>{selectedAsset}</h2>
                 {marketStatus?.isOTC && (
-                  <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <span className={`font-bold uppercase tracking-wider rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 ${isMobile && isLandscape ? 'px-1 py-0 text-[8px]' : 'px-1.5 py-0.5 text-[9px]'}`}>
                     OTC
                   </span>
                 )}
                 
                 {/* Botões: Info, Alerta (Bell) e Estrela (Favoritos) */}
+                {!(isMobile && isLandscape) && (
                 <div className="flex items-center space-x-1">
                   <button className="p-1 text-gray-400 hover:text-white transition-colors" title="Informações">
                     <Info className="w-4 h-4" />
@@ -2585,6 +2593,7 @@ const TradingPage: React.FC = () => {
                     <Star className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
                   </button>
                 </div>
+                )}
               </div>
             </div>
             
@@ -2662,14 +2671,14 @@ const TradingPage: React.FC = () => {
           </div>
 
           {/* Botões de Ferramentas - Container separado, limitado apenas à área dos botões */}
-          <div className={`absolute left-2 md:left-4 z-40 pointer-events-none`} style={{
+          <div className={`absolute z-40 pointer-events-none ${isMobile ? 'left-1' : 'left-2 md:left-4'}`} style={{
             left: leftPanelOpen && leftPanelWidth > 0 ? `calc(0.5rem + ${leftPanelWidth}px)` : isMobile ? '0.5rem' : '1rem',
             bottom: isMobile
-              ? `${mobileTradePanelHeight + 8}px`
+              ? `${mobileTradePanelHeight + (isLandscape ? 4 : 8)}px`
               : showBottomTab ? 'calc(3rem + 25vh)' : '3rem',
             transition: 'left 0.3s, bottom 0.3s ease-in-out',
           }}>
-            <div className="flex flex-col items-start space-y-2 pointer-events-auto">
+            <div className={`flex flex-col items-start pointer-events-auto ${isMobile && isLandscape ? 'space-y-1' : 'space-y-2'}`}>
               {/* 1. Botão de Tipo de Gráfico */}
               <div className="relative" data-controls-panel>
                 <button
@@ -2683,7 +2692,7 @@ const TradingPage: React.FC = () => {
                     setLeftPanelWidth(0);
                     setShowBottomTab(false);
                   }}
-                  className={`p-2 bg-black backdrop-blur-sm hover:bg-gray-900 text-white transition-all duration-200 flex items-center justify-center relative group`}
+                  className={`bg-black backdrop-blur-sm hover:bg-gray-900 text-white transition-all duration-200 flex items-center justify-center relative group ${isMobile && isLandscape ? 'p-1.5' : 'p-2'}`}
                   style={{ boxShadow: '0 2px 6px rgba(0, 0, 0, 0.3)' }}
                   title="Tipo de Gráfico"
                 >
@@ -2694,7 +2703,11 @@ const TradingPage: React.FC = () => {
                 </button>
                 {/* Dropdown normal como outros botões */}
                 {showChartTypeMenu && (
-                  <div className="absolute left-full bottom-0 ml-2 bg-black backdrop-blur-xl shadow-2xl z-[60] w-full md:w-[720px] max-h-[70vh] overflow-hidden flex flex-col border border-gray-800/50 rounded">
+                  <div className={`bg-black backdrop-blur-xl shadow-2xl z-[60] overflow-hidden flex flex-col border border-gray-800/50 rounded ${
+                    isMobile
+                      ? 'fixed left-2 right-2 w-auto max-h-[min(45vh,320px)]'
+                      : 'absolute left-full bottom-0 ml-2 w-[720px] max-h-[70vh]'
+                  }`} style={isMobile ? { bottom: mobileTradePanelHeight + 8 } : undefined}>
                     {/* Header */}
                     <div className="px-4 py-2.5 bg-black flex-shrink-0 border-b border-gray-700/30">
                       <div className="text-xs font-semibold text-gray-200 uppercase tracking-wide">TIPO DE GRÁFICO</div>
@@ -3415,7 +3428,11 @@ const TradingPage: React.FC = () => {
                   </span>
                 </button>
                 {showTools && (
-                  <div className="absolute left-full bottom-0 ml-2 bg-black backdrop-blur-xl shadow-2xl z-[60] w-full md:w-[600px] max-h-[calc(100vh-200px)] overflow-hidden flex flex-col border border-gray-800/50 rounded">
+                  <div className={`bg-black backdrop-blur-xl shadow-2xl z-[60] overflow-hidden flex flex-col border border-gray-800/50 rounded ${
+                    isMobile
+                      ? 'fixed left-2 right-2 w-auto max-h-[min(45vh,320px)]'
+                      : 'absolute left-full bottom-0 ml-2 w-[600px] max-h-[calc(100vh-200px)]'
+                  }`} style={isMobile ? { bottom: mobileTradePanelHeight + 8 } : undefined}>
                     {/* Header */}
                     <div className="px-4 py-2.5 bg-black flex items-center justify-between border-b border-gray-700/30">
                       <div className="text-xs font-semibold text-gray-200 uppercase tracking-wide">FERRAMENTAS GRÁFICAS</div>
