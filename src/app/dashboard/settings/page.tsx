@@ -82,20 +82,20 @@ const SettingsPage: React.FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Configurações</h1>
-        <p className="text-gray-600 mt-2">Gerencie sua conta e preferências</p>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Configurações</h1>
+        <p className="text-gray-600 mt-2 text-sm sm:text-base">Gerencie sua conta e preferências</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Sidebar */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
+        {/* Sidebar / abas mobile */}
         <div className="lg:col-span-1">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <nav className="space-y-1 p-4">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto lg:overflow-visible">
+            <nav className="flex lg:flex-col lg:space-y-1 p-2 sm:p-4 gap-1 lg:gap-0 min-w-max lg:min-w-0">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`w-full flex items-center space-x-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                  className={`flex-shrink-0 lg:flex-shrink lg:w-full flex items-center space-x-2 sm:space-x-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
                     activeTab === tab.id
                       ? 'bg-blue-100 text-blue-700'
                       : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
@@ -112,7 +112,7 @@ const SettingsPage: React.FC = () => {
         {/* Content */}
         <div className="lg:col-span-3">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="p-6">
+            <div className="p-4 sm:p-6">
               {/* Profile Tab */}
               {activeTab === 'profile' && (
                 <div>

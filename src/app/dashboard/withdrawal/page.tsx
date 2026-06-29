@@ -562,21 +562,21 @@ const WithdrawalPage: React.FC = () => {
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       {/* Header - Mesma estrutura do /profile */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+      <header className="bg-white border-b border-gray-200 px-3 py-2 sm:px-6 sm:py-4 flex-shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-4 min-w-0">
             {brokerLogo && (
               <div className="flex items-center space-x-2">
                 <img 
                   src={brokerLogo} 
                   alt={brokerName}
-                  className="h-16 w-auto object-contain"
+                  className="h-10 sm:h-16 w-auto object-contain max-w-[140px] sm:max-w-none"
                 />
               </div>
             )}
           </div>
           
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
             {/* Avatar clicável */}
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
@@ -601,7 +601,7 @@ const WithdrawalPage: React.FC = () => {
             {/* Botão Negociar */}
             <button
               onClick={() => router.push('/dashboard/trading')}
-              className="bg-blue-600 text-white px-6 py-2.5 text-sm font-medium hover:bg-blue-700 transition-colors"
+              className="bg-blue-600 text-white px-3 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-sm font-medium hover:bg-blue-700 transition-colors whitespace-nowrap"
               style={{ borderRadius: '0' }}
             >
               Negociar
@@ -611,12 +611,12 @@ const WithdrawalPage: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-auto discreet-scrollbar p-6">
+      <div className="flex-1 overflow-auto discreet-scrollbar p-4 sm:p-6">
         <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
             {/* Left Panel - Métodos de Retirada */}
             <div className="lg:col-span-1">
-              <div className="bg-white rounded-xl border border-gray-200 shadow-lg p-5 sticky top-6">
+              <div className="bg-white rounded-xl border border-gray-200 shadow-lg p-4 sm:p-5 lg:sticky lg:top-6">
                 <h3 className="text-xs font-bold text-gray-700 mb-4 uppercase tracking-wider">Método de Pagamento</h3>
                 <div className="space-y-3">
                   {withdrawalMethodsWithIcons.map((method) => {
@@ -827,7 +827,7 @@ const WithdrawalPage: React.FC = () => {
           />
           
           {/* Menu Lateral */}
-          <div className="fixed right-0 top-0 h-full w-80 bg-gray-50 z-[101] shadow-2xl overflow-y-auto">
+          <div className="fixed right-0 top-0 h-full w-full sm:w-80 max-w-sm sm:max-w-none bg-gray-50 z-[101] shadow-2xl overflow-y-auto">
             {/* Header do Menu */}
             <div className="bg-gray-50 p-6 border-b border-gray-200">
               <div className="flex items-center justify-between mb-4">

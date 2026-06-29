@@ -357,19 +357,19 @@ export default function TradingHistoryPage() {
   return (
     <div className="h-screen bg-[#0a0a0a] flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-[#111] border-b border-gray-800/60 px-6 py-3 flex-shrink-0">
-        <div className="flex justify-between items-center">
+      <header className="bg-[#111] border-b border-gray-800/60 px-3 py-2 sm:px-6 sm:py-3 flex-shrink-0">
+        <div className="flex justify-between items-center gap-2">
           {brokerLogo && (
-            <div className="flex items-center space-x-2 cursor-pointer" onClick={() => router.push('/dashboard/trading')}>
+            <div className="flex items-center space-x-2 cursor-pointer min-w-0" onClick={() => router.push('/dashboard/trading')}>
               <img 
                 src={brokerLogo} 
                 alt={brokerName}
-                className="h-12 w-auto object-contain"
+                className="h-9 sm:h-12 w-auto object-contain max-w-[120px] sm:max-w-none"
               />
             </div>
           )}
           
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2 sm:space-x-3 flex-shrink-0">
             {/* Language Selector */}
             <div className="relative" ref={languageDropdownRef}>
               <button
@@ -427,7 +427,7 @@ export default function TradingHistoryPage() {
             {/* Botão Negociar */}
             <button
               onClick={() => router.push('/dashboard/trading')}
-              className="bg-blue-600 text-white px-5 py-2 text-sm font-medium hover:bg-blue-700 transition-colors rounded"
+              className="bg-blue-600 text-white px-3 py-1.5 sm:px-5 sm:py-2 text-xs sm:text-sm font-medium hover:bg-blue-700 transition-colors rounded whitespace-nowrap"
             >
               Negociar
             </button>
@@ -436,20 +436,20 @@ export default function TradingHistoryPage() {
       </header>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="max-w-7xl mx-auto">
           {/* Título */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-600/10 rounded-lg flex items-center justify-center">
-                <HistoryIcon className="w-5 h-5 text-blue-400" />
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-blue-600/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                <HistoryIcon className="w-4 h-4 sm:w-5 sm:h-5 text-blue-400" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-white">Histórico de Trading</h1>
+                <h1 className="text-lg sm:text-xl font-bold text-white">Histórico de Trading</h1>
                 <p className="text-xs text-gray-500">Acompanhe todas as suas operações</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 self-start sm:self-auto">
               <button
                 disabled={!canDownload() || filteredTrades.length === 0}
                 className={`px-3 py-2 rounded-lg border transition-colors flex items-center gap-2 text-xs font-medium ${
@@ -519,10 +519,10 @@ export default function TradingHistoryPage() {
           </div>
 
           {/* Filtros */}
-          <div className="bg-[#141414] border border-gray-800/60 rounded-lg p-4 mb-4">
-            <div className="flex flex-wrap items-center gap-3">
+          <div className="bg-[#141414] border border-gray-800/60 rounded-lg p-3 sm:p-4 mb-4">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
               {/* Filtro por tipo de ativo */}
-              <div className="flex items-center gap-1 bg-[#1a1a1a] rounded-lg p-0.5">
+              <div className="flex items-center gap-1 bg-[#1a1a1a] rounded-lg p-0.5 overflow-x-auto max-w-full">
                 {assetCategories.map(opt => (
                   <button
                     key={opt.value}
@@ -549,7 +549,7 @@ export default function TradingHistoryPage() {
                 </button>
                 
                 {showDatePicker && (
-                  <div className="absolute top-full left-0 mt-2 bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-xl z-50 p-4 min-w-[400px]">
+                  <div className="absolute top-full left-0 right-0 sm:right-auto mt-2 bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-xl z-50 p-4 w-full sm:w-auto sm:min-w-[320px] max-w-[calc(100vw-2rem)]">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-sm font-medium text-white">Período</h3>
                       <button onClick={() => setShowDatePicker(false)} className="p-1 hover:bg-gray-800 rounded">
@@ -595,7 +595,7 @@ export default function TradingHistoryPage() {
               </div>
 
               {/* Contagem */}
-              <span className="text-[10px] text-gray-600 ml-auto">
+              <span className="text-[10px] text-gray-600 sm:ml-auto">
                 {filteredTrades.length} operação{filteredTrades.length !== 1 ? 'ões' : ''}
               </span>
             </div>
@@ -619,9 +619,10 @@ export default function TradingHistoryPage() {
                 </p>
               </div>
             ) : (
+              <div className="overflow-x-auto">
               <>
                 {/* Header da tabela */}
-                <div className="grid grid-cols-12 gap-2 px-4 py-2.5 border-b border-gray-800/60 bg-[#111]">
+                <div className="grid grid-cols-12 gap-2 px-4 py-2.5 border-b border-gray-800/60 bg-[#111] min-w-[680px]">
                   <div className="col-span-1 text-[10px] font-medium text-gray-500 uppercase tracking-wider">Tipo</div>
                   <div className="col-span-2 text-[10px] font-medium text-gray-500 uppercase tracking-wider">Ativo</div>
                   <div className="col-span-2 text-[10px] font-medium text-gray-500 uppercase tracking-wider">Data/Hora</div>
@@ -640,7 +641,7 @@ export default function TradingHistoryPage() {
                   return (
                     <div 
                       key={trade.id}
-                      className={`grid grid-cols-12 gap-2 px-4 py-3 transition-colors hover:bg-white/[0.02] ${
+                      className={`grid grid-cols-12 gap-2 px-4 py-3 transition-colors hover:bg-white/[0.02] min-w-[680px] ${
                         index < paginatedTrades.length - 1 ? 'border-b border-gray-800/30' : ''
                       }`}
                     >
@@ -750,6 +751,7 @@ export default function TradingHistoryPage() {
                   </div>
                 )}
               </>
+              </div>
             )}
           </div>
         </div>
@@ -763,7 +765,7 @@ export default function TradingHistoryPage() {
             onClick={() => setShowUserMenu(false)}
           />
           
-          <div className="fixed right-0 top-0 h-full w-80 bg-[#111] z-[101] shadow-2xl overflow-y-auto border-l border-gray-800/60">
+          <div className="fixed right-0 top-0 h-full w-full sm:w-80 max-w-sm sm:max-w-none bg-[#111] z-[101] shadow-2xl overflow-y-auto border-l border-gray-800/60">
             {/* Header do Menu */}
             <div className="p-6 border-b border-gray-800/60">
               <div className="flex items-center justify-between mb-4">

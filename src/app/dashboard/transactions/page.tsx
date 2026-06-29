@@ -288,19 +288,19 @@ export default function TransactionsPage() {
   return (
     <div className="h-screen bg-white flex flex-col overflow-hidden">
       {/* Header - Mesma estrutura do /profile */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
-        <div className="flex justify-between items-center">
+      <header className="bg-white border-b border-gray-200 px-3 py-2 sm:px-6 sm:py-4 flex-shrink-0">
+        <div className="flex justify-between items-center gap-2">
           {brokerLogo && (
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 min-w-0">
               <img 
                 src={brokerLogo} 
                 alt={brokerName}
-                className="h-16 w-auto object-contain"
+                className="h-10 sm:h-16 w-auto object-contain max-w-[140px] sm:max-w-none"
               />
             </div>
           )}
           
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
             {/* Language Selector */}
             <div className="relative">
               <button
@@ -360,7 +360,7 @@ export default function TransactionsPage() {
             {/* Botão Negociar */}
             <button
               onClick={() => router.push('/dashboard/trading')}
-              className="bg-blue-600 text-white px-6 py-2.5 text-sm font-medium hover:bg-blue-700 transition-colors"
+              className="bg-blue-600 text-white px-3 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-sm font-medium hover:bg-blue-700 transition-colors whitespace-nowrap"
               style={{ borderRadius: '0' }}
             >
               Negociar
@@ -370,12 +370,12 @@ export default function TransactionsPage() {
       </header>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-auto bg-gray-50 p-6">
+      <div className="flex-1 overflow-auto bg-gray-50 p-4 sm:p-6">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl font-bold text-gray-900 mb-6">Histórico do saldo</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4 sm:mb-6">Histórico do saldo</h1>
 
           {/* Filtros */}
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-5 mb-6">
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 sm:p-5 mb-4 sm:mb-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {/* Tipo de transação */}
               <div>
@@ -441,8 +441,8 @@ export default function TransactionsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2.5">
                   Data
                 </label>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <div className="relative flex-1 min-w-0 w-full">
                     <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
                     <input
                       type="date"
@@ -559,7 +559,7 @@ export default function TransactionsPage() {
           />
           
           {/* Menu Lateral */}
-          <div className="fixed right-0 top-0 h-full w-80 bg-gray-50 z-[101] shadow-2xl overflow-y-auto">
+          <div className="fixed right-0 top-0 h-full w-full sm:w-80 max-w-sm sm:max-w-none bg-gray-50 z-[101] shadow-2xl overflow-y-auto">
             {/* Header do Menu */}
             <div className="bg-gray-50 p-6 border-b border-gray-200">
               <div className="flex items-center justify-between mb-4">

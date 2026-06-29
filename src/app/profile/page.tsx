@@ -676,19 +676,19 @@ const ProfilePage: React.FC = () => {
   return (
     <div className="h-screen bg-white flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
-        <div className="flex justify-between items-center">
+      <header className="bg-white border-b border-gray-200 px-3 py-2 sm:px-6 sm:py-4 flex-shrink-0">
+        <div className="flex justify-between items-center gap-2">
           {brokerLogo && (
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 min-w-0">
               <img 
                 src={brokerLogo} 
                 alt={brokerName}
-                className="h-16 w-auto object-contain"
+                className="h-10 sm:h-16 w-auto object-contain max-w-[140px] sm:max-w-none"
               />
             </div>
           )}
           
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
             {/* Language Selector */}
             <div className="relative" ref={languageDropdownRef}>
               <button
@@ -748,7 +748,7 @@ const ProfilePage: React.FC = () => {
             {/* Botão Negociar - Cantos quadrados e maior */}
             <button
               onClick={() => router.push('/dashboard/trading')}
-              className="bg-blue-600 text-white px-6 py-2.5 text-sm font-medium hover:bg-blue-700 transition-colors"
+              className="bg-blue-600 text-white px-3 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-sm font-medium hover:bg-blue-700 transition-colors whitespace-nowrap"
               style={{ borderRadius: '0' }}
             >
               Negociar
@@ -757,9 +757,28 @@ const ProfilePage: React.FC = () => {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <aside className="w-64 bg-white border-r border-gray-200 flex-shrink-0 overflow-y-auto">
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
+        {/* Abas horizontais — mobile */}
+        <nav className="md:hidden flex-shrink-0 border-b border-gray-200 bg-white overflow-x-auto">
+          <div className="flex px-2 py-1.5 gap-1 min-w-max">
+            {menuSections.map((section) => (
+              <button
+                key={section.id}
+                onClick={() => setActiveSection(section.id)}
+                className={`flex-shrink-0 px-3 py-2 text-xs font-medium whitespace-nowrap rounded-md transition-colors ${
+                  activeSection === section.id
+                    ? 'bg-blue-50 text-blue-600'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                {section.name}
+              </button>
+            ))}
+          </div>
+        </nav>
+
+        {/* Sidebar — desktop */}
+        <aside className="hidden md:block w-64 bg-white border-r border-gray-200 flex-shrink-0 overflow-y-auto">
           <nav className="p-4">
             <div>
               {menuSections.map((section, index) => (
@@ -784,13 +803,13 @@ const ProfilePage: React.FC = () => {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+        <main className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 overflow-y-auto min-h-0">
           {activeSection === 'personal-data' && (
             <div className="max-w-4xl mx-auto">
               {/* Profile Info Header */}
-              <div className="flex justify-between items-start mb-8">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 mb-6 sm:mb-8">
                 <div></div>
-                <div className="text-right text-sm text-gray-600">
+                <div className="text-left sm:text-right text-xs sm:text-sm text-gray-600">
                   <p>Data de registro: {formatDate(user.createdAt)}</p>
                   <p>ID de perfil: {profileId}</p>
                 </div>
@@ -825,7 +844,7 @@ const ProfilePage: React.FC = () => {
                   )}
                 </div>
                 
-                <h2 className="text-2xl font-bold text-gray-900 mb-4">{user.name}</h2>
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4">{user.name}</h2>
                 
                 <div className="flex items-center gap-3 mb-3">
                   {userPhoto ? (
@@ -1071,11 +1090,11 @@ const ProfilePage: React.FC = () => {
 
           {activeSection === 'verification' && (
             <div className="max-w-4xl mx-auto">
-              <h2 className="text-2xl font-bold text-gray-900 mb-8">Verificação de Conta</h2>
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-6 sm:mb-8">Verificação de Conta</h2>
               
-              <div className="flex gap-8">
+              <div className="flex flex-col lg:flex-row gap-6 lg:gap-8">
                 {/* Steps Verticais */}
-                <div className="w-64 flex-shrink-0">
+                <div className="w-full lg:w-64 flex-shrink-0 overflow-x-auto lg:overflow-visible">
                   <div className="space-y-6">
                     {/* Step 1: Email */}
                     <div className="flex items-start space-x-3">
@@ -1446,7 +1465,7 @@ const ProfilePage: React.FC = () => {
 
           {activeSection === 'notifications' && (
             <div className="max-w-4xl mx-auto">
-              <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">Definições de notificações</h2>
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-6 sm:mb-8 text-center">Definições de notificações</h2>
               
               <div className="max-w-2xl mx-auto space-y-6">
                 {/* Email Notifications Section */}
@@ -1585,7 +1604,7 @@ const ProfilePage: React.FC = () => {
 
           {activeSection === 'account' && (
             <div className="max-w-2xl mx-auto">
-              <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">Definições da conta</h2>
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-6 sm:mb-8 text-center">Definições da conta</h2>
               
               <div className="space-y-8">
                 {/* Close Account Section */}
@@ -1632,7 +1651,7 @@ const ProfilePage: React.FC = () => {
 
           {activeSection === 'security' && (
             <div className="max-w-4xl">
-              <h2 className="text-2xl font-bold text-gray-900 mb-8">Proteção e Segurança</h2>
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-6 sm:mb-8">Proteção e Segurança</h2>
               
               {/* Two-Step Authentication Section */}
               <div className="mb-8">
@@ -1721,7 +1740,7 @@ const ProfilePage: React.FC = () => {
 
       {/* Floating Chat Button */}
       {!showChatWindow && (
-        <div className="fixed bottom-6 right-6 z-50">
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50">
           <button 
             onClick={() => {
               setShowChatWindow(true);
@@ -1729,9 +1748,9 @@ const ProfilePage: React.FC = () => {
                 loadChats();
               }
             }}
-            className="w-14 h-14 bg-blue-600 rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700 transition-colors"
+            className="w-12 h-12 sm:w-14 sm:h-14 bg-blue-600 rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700 transition-colors"
           >
-            <MessageCircle className="w-6 h-6 text-white" />
+            <MessageCircle className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
           </button>
         </div>
       )}
@@ -1739,7 +1758,7 @@ const ProfilePage: React.FC = () => {
       {/* Chat Window - Bottom Right */}
       {showChatWindow && (
         <>
-          <div className="fixed bottom-6 right-6 w-96 h-[600px] bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col z-[100]">
+          <div className="fixed inset-0 sm:inset-auto sm:bottom-6 sm:right-6 sm:w-96 sm:h-[600px] sm:max-h-[calc(100vh-3rem)] bg-white sm:rounded-lg shadow-2xl overflow-hidden flex flex-col z-[100]">
             {/* Header - Dark Gray */}
             <div className="bg-gray-800 px-4 py-3 flex items-center justify-between flex-shrink-0">
               <div className="flex items-center space-x-3">
@@ -1862,7 +1881,7 @@ const ProfilePage: React.FC = () => {
           />
           
           {/* Menu Lateral */}
-          <div className="fixed right-0 top-0 h-full w-80 bg-gray-50 z-[101] shadow-2xl overflow-y-auto">
+          <div className="fixed right-0 top-0 h-full w-full sm:w-80 max-w-sm sm:max-w-none bg-gray-50 z-[101] shadow-2xl overflow-y-auto">
             {/* Header do Menu */}
             <div className="bg-gray-50 p-6 border-b border-gray-200">
               <div className="flex items-center justify-between mb-4">
