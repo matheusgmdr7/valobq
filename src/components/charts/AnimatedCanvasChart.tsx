@@ -14,7 +14,7 @@ import { IndicatorEngine, CandleData as IndicatorCandleData } from '@/utils/indi
 import { supabase } from '@/lib/supabase';
 import { ChartLoadingScreen } from '@/components/ui/ChartLoadingScreen';
 import type { OutcomeControl } from '@/utils/tradeSettlement';
-import { pickNearestSettlementSnap } from '@/utils/tradeSettlement';
+import { pickNearestSettlementSnap, getSettlementReleasePull } from '@/utils/tradeSettlement';
 
 export type Timeframe = '1m' | '2m' | '5m' | '10m' | '15m' | '30m' | '1h' | '2h' | '4h' | '8h' | '12h' | '1d' | '1w' | '1M';
 
@@ -285,6 +285,44 @@ function formatPrice(price: number, priceRange: number, isCrypto = false): strin
   return price.toFixed(4);
 }
 
+/** Eixo de tempo do gráfico — mesmo modelo dos candles (zoom/pan) */
+export type ChartTimeAxis = {
+  chartX: number;
+  candlesAreaOffset: number;
+  availableWidth: number;
+  firstTime: number;
+  lastTime: number;
+};
+
+export function screenXFromChartTime(time: number, axis: ChartTimeAxis): number {
+  const timeRange = axis.lastTime - axis.firstTime;
+  if (timeRange <= 0) {
+    return axis.chartX + axis.candlesAreaOffset + axis.availableWidth / 2;
+  }
+  const timePosition = (time - axis.firstTime) / timeRange;
+  return axis.chartX + axis.candlesAreaOffset + timePosition * axis.availableWidth;
+}
+
+export function chartTimeFromScreenX(x: number, axis: ChartTimeAxis): number | null {
+  if (axis.firstTime <= 0 || axis.lastTime <= axis.firstTime || axis.availableWidth <= 0) {
+    return null;
+  }
+  const relativeX = (x - axis.chartX - axis.candlesAreaOffset) / axis.availableWidth;
+  return axis.firstTime + relativeX * (axis.lastTime - axis.firstTime);
+}
+
+export function screenYFromPrice(
+  price: number,
+  chartY: number,
+  chartHeight: number,
+  minPrice: number,
+  maxPrice: number,
+): number {
+  const range = maxPrice - minPrice;
+  if (range <= 0) return chartY + chartHeight / 2;
+  return chartY + chartHeight - ((price - minPrice) / range) * chartHeight;
+}
+
 export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCanvasChartProps>(
   ({ symbol, timeframe = '1m', width, height, className = '', onPriceUpdate, candleUpColor = '#22c55e', candleDownColor = '#f87171', chartType = 'candlestick', lineColor = '#f59e0b', lineStyle = 'solid', lineWithShadow = true, graphicTools = [], selectedToolType = null, onToolDrawing, onToolComplete, onToolClick, selectedToolId = null, onToolMove, indicators = [], period = '30m', expirationTime, currentTime, buyButtonHover = false, sellButtonHover = false, activeTrades = [], onCloseSnapshot, onExpirationTimeChange, onMarketStatusChange, loadingVariant = 'compact', onLoadingChange, outcomeControl = 'off' }, ref) => {
     useEffect(() => {
@@ -404,7 +442,20 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       chartWidth: 800, chartHeight: 400,
       actualMinPrice: 0, actualMaxPrice: 1,
       actualPriceRange: 1,
+      firstTime: 0,
+      lastTime: 0,
+      candlesAreaOffset: 0,
+      availableWidth: 0,
     });
+
+    const getTimeFromChartX = (x: number): number | null =>
+      chartTimeFromScreenX(x, chartLayoutRef.current);
+
+    const getChartXFromTime = (time: number): number | null => {
+      const layout = chartLayoutRef.current;
+      if (layout.firstTime <= 0 || layout.lastTime <= layout.firstTime) return null;
+      return screenXFromChartTime(time, layout);
+    };
     
     // Motor de Física de Partículas - Candle Engine
     // Sistema que mantém o candle sempre em movimento, nunca estático
@@ -431,6 +482,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       lastTickTime: Date.now(),
       lastFrameTime: performance.now()
     });
+
+    /** Fade-out pós-IMA: evita “snap” óbvio de volta ao preço de mercado ao fechar */
+    const settlementSnapWasActiveRef = useRef(false);
+    const settlementReleaseRef = useRef<{ startMs: number; holdPrice: number } | null>(null);
+    const lastImaHoldPriceRef = useRef<number | null>(null);
 
     // Ref para suavizar o preço exibido no retângulo azul (evitar mudanças muito rápidas)
     const displayedPriceRef = useRef<number>(0);
@@ -773,29 +829,67 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const timeSinceLastTick = Date.now() - engine.lastTickTime;
 
       let attractionTarget = engine.realPrice;
+      let releasePull = 0;
       const snap = pickNearestSettlementSnap(
         activeTradesRef.current,
         symbolRef.current,
         engine.realPrice,
         outcomeControlRef.current,
       );
-      if (snap) {
-        attractionTarget = engine.realPrice + (snap.targetPrice - engine.realPrice) * snap.blend;
+      const nowMs = Date.now();
+
+      if (snap && snap.blend > 0.15) {
+        settlementSnapWasActiveRef.current = true;
+        settlementReleaseRef.current = null;
+        const visualBlend = snap.blend * 0.88;
+        attractionTarget = engine.realPrice + (snap.targetPrice - engine.realPrice) * visualBlend;
+        lastImaHoldPriceRef.current = attractionTarget;
+      } else {
+        if (
+          settlementSnapWasActiveRef.current &&
+          outcomeControlRef.current !== 'off'
+        ) {
+          settlementSnapWasActiveRef.current = false;
+          const hold =
+            lastImaHoldPriceRef.current ??
+            engine.visualPrice ??
+            engine.realPrice;
+          settlementReleaseRef.current = { startMs: nowMs, holdPrice: hold };
+        }
+
+        const rel = settlementReleaseRef.current;
+        if (rel) {
+          releasePull = getSettlementReleasePull(rel.startMs, nowMs);
+          if (releasePull <= 0.002) {
+            settlementReleaseRef.current = null;
+            lastImaHoldPriceRef.current = null;
+            releasePull = 0;
+          } else {
+            attractionTarget =
+              engine.realPrice +
+              (rel.holdPrice - engine.realPrice) * releasePull;
+          }
+        }
       }
 
       const isNonCrypto = !isCryptoAssetRef.current;
+      engine.idleWanderOffset = 0;
 
-      // Forex/índices/commodities: micro-movimento contínuo entre ticks do servidor
-      if (isNonCrypto && engine.realPrice > 0) {
-        const maxWander = engine.realPrice * 0.00015;
-        if (Math.random() < 0.06 * dt) {
-          engine.idleWanderOffset += (Math.random() - 0.5) * engine.realPrice * 0.000025;
-        }
-        engine.idleWanderOffset *= Math.pow(0.965, dt);
-        engine.idleWanderOffset = Math.max(-maxWander, Math.min(maxWander, engine.idleWanderOffset));
-        if (!snap || snap.blend < 0.2) {
-          attractionTarget += engine.idleWanderOffset;
-        }
+      // Forex/índices/commodities: só ticks reais — sem wander/jitter entre atualizações
+      const imaActive = (snap && snap.blend > 0.15) || releasePull > 0.02;
+      if (isNonCrypto && !imaActive) {
+        engine.visualPrice = engine.realPrice;
+        engine.velocity = 0;
+        engine.inertia = 0;
+        return;
+      }
+
+      if (isNonCrypto && imaActive) {
+        const imaSmoothing = engine.acceleration * (releasePull > 0 ? 0.22 : 0.45);
+        engine.visualPrice += (attractionTarget - engine.visualPrice) * (imaSmoothing * dt);
+        engine.velocity = 0;
+        engine.inertia = 0;
+        return;
       }
 
       // Calcular distância entre preço visual e alvo (mercado ou fechamento IMA)
@@ -804,25 +898,30 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       
       // SMOOTHING FACTOR DINÂMICO:
       let smoothingFactor = engine.acceleration;
-      if (snap && snap.blend > 0.85) {
-        smoothingFactor = Math.max(smoothingFactor, engine.acceleration * 2.5);
+      if (snap && snap.blend > 0.25) {
+        smoothingFactor = Math.max(
+          smoothingFactor,
+          engine.acceleration * (1 + snap.blend * 0.65),
+        );
       } else if (priceDistance > priceRange * 2) {
         smoothingFactor = engine.acceleration * 2.0;
-      } else if (priceDistance < priceRange * 0.05 && !isNonCrypto) {
+      } else if (priceDistance < priceRange * 0.05) {
         smoothingFactor = engine.acceleration * 0.15;
-      } else if (isNonCrypto && priceDistance < priceRange * 0.08) {
-        smoothingFactor = engine.acceleration * 0.55;
+      }
+
+      if (releasePull > 0.02) {
+        const releaseCap = engine.acceleration * (0.14 + releasePull * 0.1);
+        smoothingFactor = Math.min(smoothingFactor, releaseCap);
       }
 
       // 1. FORÇA DE ATRAÇÃO — direto ao alvo (mercado ou fechamento IMA)
       const attraction = (attractionTarget - engine.visualPrice) * (smoothingFactor * dt);
 
-      // 2. MICRO-PULSO — mais forte em forex/OTC para candle nunca parecer congelado
+      // 2. MICRO-PULSO — só crypto (forex segue ticks reais)
       let pulse = 0;
-      const snapActive = snap && snap.blend > 0.2;
-      const jitterScale = isNonCrypto ? 0.000018 : engine.jitter;
-      if (!snapActive && (priceDistance < priceRange * 0.2 || isNonCrypto)) {
-        pulse = (Math.random() - 0.5) * (engine.realPrice * jitterScale * dt * (isNonCrypto ? 2.2 : 1));
+      const snapActive = (snap && snap.blend > 0.35) || releasePull > 0.2;
+      if (!snapActive && priceDistance < priceRange * 0.2) {
+        pulse = (Math.random() - 0.5) * (engine.realPrice * engine.jitter * dt);
       }
 
       // 3. INÉRCIA REDUZIDA — quase nenhuma derrapagem
@@ -1154,7 +1253,13 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         }
       }
 
-      candleEngineRef.current.idleWanderOffset *= 0.4;
+      candleEngineRef.current.idleWanderOffset = 0;
+      if (!isCryptoAssetRef.current) {
+        const engine = candleEngineRef.current;
+        engine.visualPrice = tickPrice;
+        engine.velocity = 0;
+        engine.inertia = 0;
+      }
 
       if (onPriceUpdate) onPriceUpdate(tickPrice);
     }, [lastTick, timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle, marketStatus]);
@@ -1396,7 +1501,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         const isSharedRef = liveCandleRef.current === lastCandle;
         const hasSeparateLiveCandle = liveCandleRef.current && !isSharedRef;
         
-        if (visualPrice > 0 && isFinite(visualPrice) && !hasSeparateLiveCandle) {
+        if (visualPrice > 0 && isFinite(visualPrice) && !hasSeparateLiveCandle && isCryptoAssetRef.current) {
           lastCandle.high = Math.max(lastCandle.high, visualPrice);
           lastCandle.low = Math.min(lastCandle.low, visualPrice);
           lastCandle.close = visualPrice;
@@ -1716,7 +1821,14 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const actualPriceRange = actualMaxPrice - actualMinPrice;
 
       // Atualizar layout ref para handlers de mouse
-      chartLayoutRef.current = { chartX, chartY, chartWidth, chartHeight, actualMinPrice, actualMaxPrice, actualPriceRange };
+      chartLayoutRef.current = {
+        chartX, chartY, chartWidth, chartHeight,
+        actualMinPrice, actualMaxPrice, actualPriceRange,
+        firstTime: firstTimeForCandles,
+        lastTime: lastTimeForCandles,
+        candlesAreaOffset,
+        availableWidth,
+      };
 
       // Desenhar fundo da régua de preços (lado direito) - igual ao TradingView
       // Fundo da mesma cor do gráfico (preto)
@@ -1744,15 +1856,14 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const engine = candleEngineRef.current;
       const currentVisualPrice = engine.visualPrice || (visibleCandles.length > 0 ? visibleCandles[visibleCandles.length - 1].close : null);
       
-      // Suavizar o preço exibido no retângulo azul (evitar mudanças muito rápidas)
-      // Esta suavização é independente do movimento do candle (visualPrice)
+      // Suavizar o preço exibido no retângulo azul (crypto); forex usa preço real do tick
       if (currentVisualPrice !== null && currentVisualPrice > 0) {
-        if (displayedPriceRef.current === 0) {
+        if (!isCryptoAssetRef.current) {
+          displayedPriceRef.current = engine.realPrice;
+        } else if (displayedPriceRef.current === 0) {
           displayedPriceRef.current = currentVisualPrice;
         } else {
-          // Interpolação muito suave para o preço exibido no retângulo azul
-          // Fator reduzido para movimento mais suave e elegante
-          const smoothingFactor = 0.08; // Fator de suavização bem mais lento para o retângulo azul
+          const smoothingFactor = 0.08;
           displayedPriceRef.current = displayedPriceRef.current + (currentVisualPrice - displayedPriceRef.current) * smoothingFactor;
         }
       }
@@ -2754,8 +2865,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         }
         
         // CRÍTICO: Para o live candle, nunca usar cache no primeiro frame após criação
-        // Isso garante que o live candle seja renderizado com valores corretos desde o primeiro frame
-        let shouldUseCache = interpolatedCandlesRef.current.has(candleKey) && !forceNoCacheForLiveCandle;
+        // Forex/OTC: sem interpolação visual — candle só move com ticks reais
+        const skipLiveInterpolation = isLiveCandle && !isCryptoAssetRef.current;
+        let shouldUseCache = interpolatedCandlesRef.current.has(candleKey) && !forceNoCacheForLiveCandle && !skipLiveInterpolation;
         if (shouldUseCache) {
           const cached = interpolatedCandlesRef.current.get(candleKey)!;
           
@@ -3975,6 +4087,46 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       
       // Desenhar ferramentas gráficas
       const currentGraphicTools = graphicToolsRef.current;
+      const chartTimeAxis: ChartTimeAxis = {
+        chartX,
+        candlesAreaOffset,
+        availableWidth,
+        firstTime: firstTimeForCandles,
+        lastTime: lastTimeForCandles,
+      };
+      const resolveGraphicToolXY = (
+        point: { x?: number; y?: number; time?: number; price?: number },
+      ): { x: number; y: number } | null => {
+        let x: number | undefined;
+        let y: number | undefined;
+        if (
+          point.time !== undefined &&
+          firstTimeForCandles > 0 &&
+          lastTimeForCandles > firstTimeForCandles
+        ) {
+          x = screenXFromChartTime(point.time, chartTimeAxis);
+        } else if (point.x !== undefined) {
+          x = point.x;
+        }
+        if (point.price !== undefined && actualPriceRange > 0) {
+          y = screenYFromPrice(point.price, chartY, chartHeight, actualMinPrice, actualMaxPrice);
+        } else if (point.y !== undefined) {
+          y = point.y;
+        }
+        if (x === undefined || y === undefined) return null;
+        return { x, y };
+      };
+      const resolveGraphicToolX = (point: { x?: number; time?: number }): number | null => {
+        if (
+          point.time !== undefined &&
+          firstTimeForCandles > 0 &&
+          lastTimeForCandles > firstTimeForCandles
+        ) {
+          return screenXFromChartTime(point.time, chartTimeAxis);
+        }
+        if (point.x !== undefined) return point.x;
+        return null;
+      };
       if (currentGraphicTools && currentGraphicTools.length > 0) {
         currentGraphicTools.forEach((tool) => {
           if (!tool.visible || !tool.points || tool.points.length === 0) return;
@@ -4036,25 +4188,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               ctx.strokeRect(chartX + chartWidth - sqSize, y - sqSize, sqSize * 2, sqSize * 2);
             }
           } else if (tool.type === 'vertical' && tool.points.length > 0) {
-            // Linha vertical - recalcular X baseado no tempo atual do viewport
             const point = tool.points[0];
-            let x: number;
-            if (point.time !== undefined && visibleCandles.length > 0) {
-              // Encontrar o índice do candle mais próximo do tempo
-              let closestIndex = 0;
-              let minDiff = Math.abs(visibleCandles[0].time - point.time);
-              for (let i = 1; i < visibleCandles.length; i++) {
-                const diff = Math.abs(visibleCandles[i].time - point.time);
-                if (diff < minDiff) {
-                  minDiff = diff;
-                  closestIndex = i;
-                }
-              }
-              x = chartX + (closestIndex / visibleCandles.length) * chartWidth;
-            } else {
-              // Usar X direto se não houver tempo
-              x = point.x;
-            }
+            const xResolved = resolveGraphicToolX(point);
+            if (xResolved === null) return;
+            const x = xResolved;
             ctx.moveTo(x, chartY);
             ctx.lineTo(x, chartY + chartHeight);
             ctx.stroke();
@@ -4120,12 +4257,13 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   });
                 });
                 
-                // Calcular xStart e xEnd
                 let xStart = chartX;
                 let xEnd = chartX + chartWidth;
-                if (tool.points[0]?.x !== undefined && tool.points[1]?.x !== undefined) {
-                  xStart = tool.points[0].x;
-                  xEnd = tool.points[1].x;
+                const x0 = resolveGraphicToolX(tool.points[0] ?? {});
+                const x1 = resolveGraphicToolX(tool.points[1] ?? {});
+                if (x0 !== null && x1 !== null) {
+                  xStart = x0;
+                  xEnd = x1;
                 }
                 
                 // Desenhar regiões coloridas entre os níveis
@@ -4174,40 +4312,14 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               }
             }
             
-            // Fibonacci: usar coordenadas de mundo (time/price) para renderização fluida
-            const p1Time = tool.points[0]?.time;
-            const p2Time = tool.points[1]?.time;
-            
-            // Calcular xStart e xEnd usando as mesmas funções de conversão dos candles
+            // Fibonacci: coordenadas de mundo (time/price)
             let xStart = chartX;
             let xEnd = chartX + chartWidth;
-            
-            if (p1Time !== undefined && p2Time !== undefined && visibleCandles.length > 0) {
-              // Encontrar índices dos candles mais próximos
-              let closestIndex1 = 0;
-              let closestIndex2 = 0;
-              let minDiff1 = Math.abs(visibleCandles[0].time - p1Time);
-              let minDiff2 = Math.abs(visibleCandles[0].time - p2Time);
-              
-              for (let i = 1; i < visibleCandles.length; i++) {
-                const diff1 = Math.abs(visibleCandles[i].time - p1Time);
-                const diff2 = Math.abs(visibleCandles[i].time - p2Time);
-                if (diff1 < minDiff1) {
-                  minDiff1 = diff1;
-                  closestIndex1 = i;
-                }
-                if (diff2 < minDiff2) {
-                  minDiff2 = diff2;
-                  closestIndex2 = i;
-                }
-              }
-              
-              xStart = chartX + (closestIndex1 / visibleCandles.length) * chartWidth;
-              xEnd = chartX + (closestIndex2 / visibleCandles.length) * chartWidth;
-            } else if (tool.points[0]?.x !== undefined && tool.points[1]?.x !== undefined) {
-              // Fallback: usar x direto se não tiver time
-              xStart = tool.points[0].x;
-              xEnd = tool.points[1].x;
+            const fibX0 = resolveGraphicToolX(tool.points[0] ?? {});
+            const fibX1 = resolveGraphicToolX(tool.points[1] ?? {});
+            if (fibX0 !== null && fibX1 !== null) {
+              xStart = fibX0;
+              xEnd = fibX1;
             }
             
             const priceRange = Math.abs(endPrice - startPrice);
@@ -4294,62 +4406,15 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             
             ctx.strokeStyle = tool.color; // Resetar cor
           } else if ((tool.type === 'line' || tool.type === 'trendline') && tool.points.length >= 2) {
-            // Linha ou trendline - recalcular coordenadas baseadas em preço/tempo
-            
-            // Calcular coordenadas para ambos os pontos
             const calculatedPoints: Array<{ x: number; y: number; valid: boolean }> = [];
-            
+
             for (let idx = 0; idx < tool.points.length; idx++) {
               const point = tool.points[idx];
-              let x: number | null = null;
-              let y: number | null = null;
-              let valid = true;
-              
-              // Priorizar usar x/y direto se disponível (mais confiável para renderização imediata)
-              if (point.x !== undefined && point.y !== undefined) {
-                // Usar coordenadas diretas (mais confiável)
-                x = point.x;
-                y = point.y;
-              } else if (point.time !== undefined && point.price !== undefined && visibleCandles.length > 0) {
-                // Recalcular X baseado no tempo
-                let closestIndex = 0;
-                let minDiff = Math.abs(visibleCandles[0].time - point.time);
-                for (let i = 1; i < visibleCandles.length; i++) {
-                  const diff = Math.abs(visibleCandles[i].time - point.time);
-                  if (diff < minDiff) {
-                    minDiff = diff;
-                    closestIndex = i;
-                  }
-                }
-                x = chartX + (closestIndex / visibleCandles.length) * chartWidth;
-                
-                // Recalcular Y baseado no preço
-                y = chartY + chartHeight - ((point.price - actualMinPrice) / actualPriceRange) * chartHeight;
-              } else if (point.time !== undefined && visibleCandles.length > 0) {
-                // Apenas tempo disponível
-                let closestIndex = 0;
-                let minDiff = Math.abs(visibleCandles[0].time - point.time);
-                for (let i = 1; i < visibleCandles.length; i++) {
-                  const diff = Math.abs(visibleCandles[i].time - point.time);
-                  if (diff < minDiff) {
-                    minDiff = diff;
-                    closestIndex = i;
-                  }
-                }
-                x = chartX + (closestIndex / visibleCandles.length) * chartWidth;
-                y = point.y !== undefined ? point.y : (chartY + chartHeight / 2); // Fallback para centro se não tiver Y
-              } else if (point.price !== undefined) {
-                // Apenas preço disponível
-                y = chartY + chartHeight - ((point.price - actualMinPrice) / actualPriceRange) * chartHeight;
-                x = point.x !== undefined ? point.x : (chartX + chartWidth / 2); // Fallback para centro se não tiver X
+              const resolved = resolveGraphicToolXY(point);
+              if (resolved) {
+                calculatedPoints.push({ x: resolved.x, y: resolved.y, valid: true });
               } else {
-                valid = false;
-              }
-              
-              if (x !== null && y !== null && valid) {
-                calculatedPoints.push({ x, y, valid: true });
-              } else {
-                calculatedPoints.push({ x: x || 0, y: y || 0, valid: false });
+                calculatedPoints.push({ x: 0, y: 0, valid: false });
               }
             }
             
@@ -5149,15 +5214,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         return maxPrice - (relativeY * (maxPrice - minPrice));
       };
       
-      const getTimeFromX = (x: number, chartX: number, chartWidth: number, visibleCandles: CandleData[]): number | null => {
-        if (visibleCandles.length === 0) return null;
-        const relativeX = (x - chartX) / chartWidth;
-        const candleIndex = Math.floor(relativeX * visibleCandles.length);
-        if (candleIndex >= 0 && candleIndex < visibleCandles.length) {
-          return visibleCandles[candleIndex].time;
-        }
-        return null;
-      };
+      const getTimeFromX = (x: number): number | null => getTimeFromChartX(x);
       
       // Handler de mouse down (iniciar pan ou desenho de ferramenta)
       const handleMouseDown = (e: MouseEvent) => {
@@ -5232,7 +5289,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
               
               const clickedPrice = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-              const clickedTime = getTimeFromX(mouseX, chartX, chartWidth, visibleCandles);
+              const clickedTime = getTimeFromX(mouseX);
               
               // Verificar se clicou em alguma ferramenta (linha, trendline, horizontal, vertical, etc.)
               for (const tool of graphicToolsRef.current) {
@@ -5280,22 +5337,15 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                 // Detectar clique em linha vertical
                 if (tool.type === 'vertical' && tool.points.length > 0) {
                   const point = tool.points[0];
-                  let x: number;
-                  if (point.time !== undefined && visibleCandles.length > 0) {
-                    let closestIndex = 0;
-                    let minDiff = Math.abs(visibleCandles[0].time - point.time);
-                    for (let i = 1; i < visibleCandles.length; i++) {
-                      const diff = Math.abs(visibleCandles[i].time - point.time);
-                      if (diff < minDiff) {
-                        minDiff = diff;
-                        closestIndex = i;
-                      }
-                    }
-                    x = chartX + (closestIndex / visibleCandles.length) * chartWidth;
-                  } else if (point.x !== undefined) {
+                  let x: number | undefined;
+                  if (point.time !== undefined) {
+                    x = getChartXFromTime(point.time) ?? undefined;
+                  }
+                  if (x === undefined && point.x !== undefined) {
                     x = point.x;
-                  } else {
-                    continue; // Sem coordenadas válidas
+                  }
+                  if (x === undefined) {
+                    continue;
                   }
                   const distance = Math.abs(mouseX - x);
                   // Área clicável generosa de 15 pixels
@@ -5355,28 +5405,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                     // Verificar também se está dentro da área entre xStart e xEnd
                     let xStart = chartX;
                     let xEnd = chartX + chartWidth;
-                    
-                    if (p1.time !== undefined && p2.time !== undefined && visibleCandles.length > 0) {
-                      let closestIndex1 = 0;
-                      let closestIndex2 = 0;
-                      let minDiff1 = Math.abs(visibleCandles[0].time - p1.time);
-                      let minDiff2 = Math.abs(visibleCandles[0].time - p2.time);
-                      
-                      for (let i = 1; i < visibleCandles.length; i++) {
-                        const diff1 = Math.abs(visibleCandles[i].time - p1.time);
-                        const diff2 = Math.abs(visibleCandles[i].time - p2.time);
-                        if (diff1 < minDiff1) {
-                          minDiff1 = diff1;
-                          closestIndex1 = i;
-                        }
-                        if (diff2 < minDiff2) {
-                          minDiff2 = diff2;
-                          closestIndex2 = i;
-                        }
-                      }
-                      
-                      xStart = chartX + (closestIndex1 / visibleCandles.length) * chartWidth;
-                      xEnd = chartX + (closestIndex2 / visibleCandles.length) * chartWidth;
+                    const hitX0 = p1.time !== undefined ? getChartXFromTime(p1.time) : p1.x;
+                    const hitX1 = p2.time !== undefined ? getChartXFromTime(p2.time) : p2.x;
+                    if (hitX0 !== null && hitX0 !== undefined && hitX1 !== null && hitX1 !== undefined) {
+                      xStart = hitX0;
+                      xEnd = hitX1;
                     } else if (p1.x !== undefined && p2.x !== undefined) {
                       xStart = p1.x;
                       xEnd = p2.x;
@@ -5396,7 +5429,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                       if (selectedToolIdRef.current === tool.id && onToolMove) {
                         // DELTA DRAGGING: Calcular offset inicial
                         const mousePrice = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-                        const mouseTime = getTimeFromX(mouseX, chartX, chartWidth, visibleCandles);
+                        const mouseTime = getTimeFromX(mouseX);
                         
                         // Para Fibonacci, usar o ponto médio como referência
                         const avgPrice = (startPrice + endPrice) / 2;
@@ -5438,29 +5471,18 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                 // Recalcular coordenadas dos pontos
                 let x1 = p1.x, y1 = p1.y, x2 = p2.x, y2 = p2.y;
                 
-                if (p1.time !== undefined && p2.time !== undefined && visibleCandles.length > 0) {
-                  let closestIndex1 = 0, closestIndex2 = 0;
-                  let minDiff1 = Math.abs(visibleCandles[0].time - p1.time);
-                  let minDiff2 = Math.abs(visibleCandles[0].time - p2.time);
-                  for (let i = 1; i < visibleCandles.length; i++) {
-                    const diff1 = Math.abs(visibleCandles[i].time - p1.time);
-                    const diff2 = Math.abs(visibleCandles[i].time - p2.time);
-                    if (diff1 < minDiff1) {
-                      minDiff1 = diff1;
-                      closestIndex1 = i;
-                    }
-                    if (diff2 < minDiff2) {
-                      minDiff2 = diff2;
-                      closestIndex2 = i;
-                    }
-                  }
-                  x1 = chartX + (closestIndex1 / visibleCandles.length) * chartWidth;
-                  x2 = chartX + (closestIndex2 / visibleCandles.length) * chartWidth;
+                if (p1.time !== undefined) {
+                  const tx1 = getChartXFromTime(p1.time);
+                  if (tx1 !== null) x1 = tx1;
+                }
+                if (p2.time !== undefined) {
+                  const tx2 = getChartXFromTime(p2.time);
+                  if (tx2 !== null) x2 = tx2;
                 }
                 
                 if (p1.price !== undefined && p2.price !== undefined) {
-                  y1 = chartY + chartHeight - ((p1.price - actualMinPrice) / (actualMaxPrice - actualMinPrice)) * chartHeight;
-                  y2 = chartY + chartHeight - ((p2.price - actualMinPrice) / (actualMaxPrice - actualMinPrice)) * chartHeight;
+                  y1 = screenYFromPrice(p1.price, chartY, chartHeight, actualMinPrice, actualMaxPrice);
+                  y2 = screenYFromPrice(p2.price, chartY, chartHeight, actualMinPrice, actualMaxPrice);
                 }
                 
                 // Calcular distância do ponto até a linha
@@ -5499,7 +5521,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   if (selectedToolIdRef.current === tool.id && onToolMove) {
                     const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
                     const mousePrice = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-                    const mouseTime = getTimeFromX(mouseX, chartX, chartWidth, visibleCandles);
+                    const mouseTime = getTimeFromX(mouseX);
                     
                     // Para linha/trendline, calcular delta baseado no ponto médio
                     const avgPrice = p1.price !== undefined && p2.price !== undefined 
@@ -5546,7 +5568,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
               
               const price = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-              const time = getTimeFromX(mouseX, chartX, chartWidth, visibleCandles);
+              const time = getTimeFromX(mouseX);
               
               // PRIMEIRO: Verificar se já está desenhando e precisa adicionar segundo ponto
               // Esta verificação deve vir ANTES de iniciar novo desenho
@@ -5647,7 +5669,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
             
             const currentPrice = getPriceFromY(viewportRef.current.mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-            const currentTime = getTimeFromX(viewportRef.current.mouseX, chartX, chartWidth, visibleCandles);
+            const currentTime = getTimeFromX(viewportRef.current.mouseX);
             
             // Encontrar a ferramenta sendo arrastada
             const tool = graphicToolsRef.current.find(t => t.id === toolDraggingRef.current.toolId);
@@ -5664,24 +5686,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   y: chartY + chartHeight - (((p.price || originalPrice) + priceDelta - actualMinPrice) / (actualMaxPrice - actualMinPrice)) * chartHeight
                 }));
               } else if (tool.type === 'vertical' && tool.points[0].time !== undefined) {
-                // Linha vertical: atualizar apenas o tempo baseado na posição X do mouse
-                const originalTime = tool.points[0].time;
-                const timeDelta = (currentTime || 0) - originalTime;
-                // Encontrar o índice do candle mais próximo do novo tempo
-                let closestIndex = 0;
-                let minDiff = Math.abs(visibleCandles[0].time - ((originalTime + timeDelta) || 0));
-                for (let i = 1; i < visibleCandles.length; i++) {
-                  const diff = Math.abs(visibleCandles[i].time - ((originalTime + timeDelta) || 0));
-                  if (diff < minDiff) {
-                    minDiff = diff;
-                    closestIndex = i;
-                  }
-                }
-                const newX = chartX + (closestIndex / visibleCandles.length) * chartWidth;
+                const newTime = currentTime;
+                if (newTime === null) return;
                 newPoints = tool.points.map(p => ({
                   ...p,
-                  time: (p.time || originalTime) + timeDelta,
-                  x: newX
+                  time: newTime,
                 }));
               } else if (tool.type === 'line' || tool.type === 'trendline') {
                 // DELTA DRAGGING: Usar offset inicial para movimento preciso
@@ -5691,7 +5700,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                 if (initialDeltaPrice !== null && initialDeltaTime !== null) {
                   // Converter posição atual do mouse para coordenadas de mundo
                   const currentMousePrice = getPriceFromY(viewportRef.current.mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-                  const currentMouseTime = getTimeFromX(viewportRef.current.mouseX, chartX, chartWidth, visibleCandles);
+                  const currentMouseTime = getTimeFromX(viewportRef.current.mouseX);
                   
                   // Calcular nova posição dos pontos: mouse atual - delta inicial
                   // Isso garante que a ferramenta siga o mouse perfeitamente
@@ -5720,21 +5729,13 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                     let newX = p.x;
                     let newY = p.y;
                     
-                    if (newTime !== undefined && visibleCandles.length > 0) {
-                      let closestIndex = 0;
-                      let minDiff = Math.abs(visibleCandles[0].time - newTime);
-                      for (let i = 1; i < visibleCandles.length; i++) {
-                        const diff = Math.abs(visibleCandles[i].time - newTime);
-                        if (diff < minDiff) {
-                          minDiff = diff;
-                          closestIndex = i;
-                        }
-                      }
-                      newX = chartX + (closestIndex / visibleCandles.length) * chartWidth;
+                    const layout = chartLayoutRef.current;
+                    if (newTime !== undefined && layout.firstTime > 0) {
+                      newX = screenXFromChartTime(newTime, layout);
                     }
                     
                     if (newPrice !== undefined) {
-                      newY = chartY + chartHeight - ((newPrice - actualMinPrice) / (actualMaxPrice - actualMinPrice)) * chartHeight;
+                      newY = screenYFromPrice(newPrice, chartY, chartHeight, actualMinPrice, actualMaxPrice);
                     }
                     
                     return {
@@ -5754,7 +5755,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                     x: (p.x || 0) + deltaX,
                     y: (p.y || 0) + deltaY,
                     price: p.price !== undefined ? getPriceFromY((p.y || 0) + deltaY, chartY, chartHeight, actualMinPrice, actualMaxPrice) : p.price,
-                    time: p.time !== undefined ? getTimeFromX((p.x || 0) + deltaX, chartX, chartWidth, visibleCandles) : p.time
+                    time: p.time !== undefined ? getTimeFromX((p.x || 0) + deltaX) : p.time
                   }));
                 }
               } else if (tool.type === 'fibonacci') {
@@ -5765,7 +5766,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                 if (initialDeltaPrice !== null && initialDeltaTime !== null) {
                   // Converter posição atual do mouse para coordenadas de mundo
                   const currentMousePrice = getPriceFromY(viewportRef.current.mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-                  const currentMouseTime = getTimeFromX(viewportRef.current.mouseX, chartX, chartWidth, visibleCandles);
+                  const currentMouseTime = getTimeFromX(viewportRef.current.mouseX);
                   
                   // Calcular nova posição dos pontos: mouse atual - delta inicial
                   const targetPrice = currentMousePrice - initialDeltaPrice;
@@ -5793,21 +5794,13 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                     let newX = p.x;
                     let newY = p.y;
                     
-                    if (newTime !== undefined && visibleCandles.length > 0) {
-                      let closestIndex = 0;
-                      let minDiff = Math.abs(visibleCandles[0].time - newTime);
-                      for (let i = 1; i < visibleCandles.length; i++) {
-                        const diff = Math.abs(visibleCandles[i].time - newTime);
-                        if (diff < minDiff) {
-                          minDiff = diff;
-                          closestIndex = i;
-                        }
-                      }
-                      newX = chartX + (closestIndex / visibleCandles.length) * chartWidth;
+                    const layout = chartLayoutRef.current;
+                    if (newTime !== undefined && layout.firstTime > 0) {
+                      newX = screenXFromChartTime(newTime, layout);
                     }
                     
                     if (newPrice !== undefined) {
-                      newY = chartY + chartHeight - ((newPrice - actualMinPrice) / (actualMaxPrice - actualMinPrice)) * chartHeight;
+                      newY = screenYFromPrice(newPrice, chartY, chartHeight, actualMinPrice, actualMaxPrice);
                     }
                     
                     return {
@@ -5827,7 +5820,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                     x: (p.x || 0) + deltaX,
                     y: (p.y || 0) + deltaY,
                     price: p.price !== undefined ? getPriceFromY((p.y || 0) + deltaY, chartY, chartHeight, actualMinPrice, actualMaxPrice) : p.price,
-                    time: p.time !== undefined ? getTimeFromX((p.x || 0) + deltaX, chartX, chartWidth, visibleCandles) : p.time
+                    time: p.time !== undefined ? getTimeFromX((p.x || 0) + deltaX) : p.time
                   }));
                 }
               } else {
@@ -5839,7 +5832,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   x: (p.x || 0) + deltaX,
                   y: (p.y || 0) + deltaY,
                   price: p.price !== undefined ? getPriceFromY((p.y || 0) + deltaY, chartY, chartHeight, actualMinPrice, actualMaxPrice) : p.price,
-                  time: p.time !== undefined ? getTimeFromX((p.x || 0) + deltaX, chartX, chartWidth, visibleCandles) : p.time
+                  time: p.time !== undefined ? getTimeFromX((p.x || 0) + deltaX) : p.time
                 }));
               }
               
@@ -5861,7 +5854,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
             
             const price = getPriceFromY(viewportRef.current.mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-            const time = getTimeFromX(viewportRef.current.mouseX, chartX, chartWidth, visibleCandles);
+            const time = getTimeFromX(viewportRef.current.mouseX);
             
             // Atualizar pontos de desenho
             if (toolDrawingRef.current.toolType === 'line' || toolDrawingRef.current.toolType === 'trendline') {
@@ -6076,14 +6069,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                     break;
                   }
                 } else if (tool.type === 'vertical' && tool.points[0]?.time !== undefined) {
-                  let closestIndex = 0;
-                  let minDiff = Math.abs(visCandles[0].time - tool.points[0].time);
-                  for (let ci = 1; ci < visCandles.length; ci++) {
-                    const diff = Math.abs(visCandles[ci].time - tool.points[0].time);
-                    if (diff < minDiff) { minDiff = diff; closestIndex = ci; }
-                  }
-                  const x = toolChartX + (closestIndex / visCandles.length) * toolChartWidth;
-                  if (Math.abs(mouseX - x) < 10) {
+                  const x = getChartXFromTime(tool.points[0].time!);
+                  if (x !== null && Math.abs(mouseX - x) < 10) {
                     isOverGraphicTool = true;
                     canvas.style.cursor = 'ew-resize';
                     break;
@@ -6093,18 +6080,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   const p1 = tool.points[0];
                   const p2 = tool.points[1];
                   if (p1.price !== undefined && p2.price !== undefined && p1.time !== undefined && p2.time !== undefined) {
-                    const y1 = toolChartY + toolChartHeight - ((p1.price - aMinP) / (aMaxP - aMinP)) * toolChartHeight;
-                    const y2 = toolChartY + toolChartHeight - ((p2.price - aMinP) / (aMaxP - aMinP)) * toolChartHeight;
-                    let ci1 = 0, ci2 = 0;
-                    let md1 = Infinity, md2 = Infinity;
-                    for (let ci = 0; ci < visCandles.length; ci++) {
-                      const d1 = Math.abs(visCandles[ci].time - p1.time);
-                      const d2 = Math.abs(visCandles[ci].time - p2.time);
-                      if (d1 < md1) { md1 = d1; ci1 = ci; }
-                      if (d2 < md2) { md2 = d2; ci2 = ci; }
-                    }
-                    const x1 = toolChartX + (ci1 / visCandles.length) * toolChartWidth;
-                    const x2 = toolChartX + (ci2 / visCandles.length) * toolChartWidth;
+                    const y1 = screenYFromPrice(p1.price, toolChartY, toolChartHeight, aMinP, aMaxP);
+                    const y2 = screenYFromPrice(p2.price, toolChartY, toolChartHeight, aMinP, aMaxP);
+                    const x1 = getChartXFromTime(p1.time);
+                    const x2 = getChartXFromTime(p2.time);
+                    if (x1 === null || x2 === null) continue;
                     // Distância ponto-segmento
                     const dx = x2 - x1;
                     const dy = y2 - y1;
