@@ -102,6 +102,18 @@ function reanchorSymbol(symbol: string, price: number, isOTC = true): void {
     otcManager.forcePrice(symbol, price);
   }
   klineAggregator.seed(symbol, price, { isOTC });
+  void saveAnchorToRedis(symbol, price);
+}
+
+async function saveAnchorToRedis(symbol: string, price: number): Promise<void> {
+  if (!redisClient) return;
+  try {
+    const key = `PRICE:LATEST:${symbol}`;
+    const value = JSON.stringify({ symbol, price, close: price, updatedAt: Date.now(), isOTC: true });
+    await redisClient.set(key, value);
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -128,7 +140,7 @@ function startSyntheticForex(symbol: string, anchorOverride?: number): void {
   klineAggregator.seed(symbol, anchor, { isOTC: true });
   lastRealPrices.set(symbol, anchor);
 
-  resolveAnchorPrice(symbol).then(({ price: apiPrice, source }) => {
+  resolveAnchorPrice(symbol, { skipTwelveData: isCategorySyntheticOnly(category) }).then(({ price: apiPrice, source }) => {
     if (apiPrice <= 0 || !otcManager.isActive(symbol)) return;
     const recentClient = clientAnchorSync.get(symbol);
     if (recentClient && Date.now() - recentClient.at < 120_000) return;
@@ -672,8 +684,15 @@ function startServer(): void {
             }
           } else if (useOTC) {
             if (!otcManager.isActive(symbol)) {
-              const anchor = lastRealPrices.get(symbol);
-              startSyntheticForex(symbol, anchor && anchor > 0 ? anchor : undefined);
+              const clientAnchor = clientAnchorSync.get(symbol);
+              const cached = lastRealPrices.get(symbol);
+              const anchorOverride =
+                clientAnchor && Date.now() - clientAnchor.at < 120_000
+                  ? clientAnchor.price
+                  : cached && cached > 0
+                    ? cached
+                    : undefined;
+              startSyntheticForex(symbol, anchorOverride);
             }
           } else {
             // Mercado aberto: TwelveData WS → fallback motor sintético
