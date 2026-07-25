@@ -6560,7 +6560,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           />
         )}
         <div
-          className="pointer-events-auto absolute bottom-[max(0.375rem,env(safe-area-inset-bottom,0px))] left-1/2 z-20 flex -translate-x-1/2 items-stretch gap-px rounded-sm border border-white/10 bg-[#0d1117]/75 p-px shadow-md backdrop-blur-sm sm:bottom-2"
+          className="pointer-events-auto absolute bottom-[max(2rem,calc(1.5rem+env(safe-area-inset-bottom,0px)))] left-1/2 z-20 flex -translate-x-1/2 items-stretch gap-px rounded-sm border border-white/10 bg-[#0d1117]/75 p-px shadow-md backdrop-blur-sm sm:bottom-9"
           onPointerDown={(e) => e.stopPropagation()}
         >
           <button
