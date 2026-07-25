@@ -46,37 +46,37 @@ const OTC_CONFIGS: Record<string, OTCConfig> = {
     momentumScale: 0.48,
   },
   stocks: {
-    volatility: 0.00016,
+    volatility: 0.00018,
     meanReversionSpeed: 0.0035,
-    tickIntervalMs: 8,
+    tickIntervalMs: 4,
     spreadPercent: 0.01,
-    maxTrendStrength: 0.00008,
+    maxTrendStrength: 0.00006,
     trendDurationTicks: 70,
-    trendIdleProbability: 0.22,
-    momentumCarry: 0.3,
-    momentumScale: 0.45,
+    trendIdleProbability: 0.06,
+    momentumCarry: 0.32,
+    momentumScale: 0.48,
   },
   indices: {
-    volatility: 0.00012,
+    volatility: 0.00015,
     meanReversionSpeed: 0.003,
-    tickIntervalMs: 6,
+    tickIntervalMs: 4,
     spreadPercent: 0.005,
-    maxTrendStrength: 0.00007,
+    maxTrendStrength: 0.000055,
     trendDurationTicks: 75,
-    trendIdleProbability: 0.22,
-    momentumCarry: 0.3,
-    momentumScale: 0.45,
+    trendIdleProbability: 0.06,
+    momentumCarry: 0.32,
+    momentumScale: 0.48,
   },
   commodities: {
-    volatility: 0.00014,
+    volatility: 0.00016,
     meanReversionSpeed: 0.003,
-    tickIntervalMs: 6,
+    tickIntervalMs: 4,
     spreadPercent: 0.008,
-    maxTrendStrength: 0.00007,
+    maxTrendStrength: 0.000055,
     trendDurationTicks: 70,
-    trendIdleProbability: 0.22,
-    momentumCarry: 0.3,
-    momentumScale: 0.45,
+    trendIdleProbability: 0.06,
+    momentumCarry: 0.32,
+    momentumScale: 0.48,
   },
 };
 
@@ -223,9 +223,21 @@ class OTCSymbolEngine {
     this.momentum = this.momentum * 0.5 + (this.currentPrice - this.lastPrice) * momentumCarry;
     const momentumComponent = this.momentum * momentumScale;
     
-    // 6. Calcular novo preço
+    // 6. Calcular novo preço (garantir movimento mínimo visível por tick)
     this.lastPrice = this.currentPrice;
-    const priceChange = trendComponent + meanReversionComponent + randomComponent + momentumComponent;
+    let priceChange = trendComponent + meanReversionComponent + randomComponent + momentumComponent;
+    const minStep = this.currentPrice * 0.000006;
+    if (Math.abs(priceChange) < minStep) {
+      const dir =
+        this.trendDirection !== 0
+          ? this.trendDirection
+          : this.momentum !== 0
+            ? Math.sign(this.momentum)
+            : this.gaussianRandom() >= 0
+              ? 1
+              : -1;
+      priceChange = dir * minStep;
+    }
     this.currentPrice = this.currentPrice + priceChange;
     
     // 7. Garantir que o preço não fique negativo ou excessivamente distante

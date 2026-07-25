@@ -875,10 +875,14 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const isNonCrypto = !isCryptoAssetRef.current;
       engine.idleWanderOffset = 0;
 
-      // Forex/índices/commodities: só ticks reais — sem wander/jitter entre atualizações
+      // Forex/índices/commodities/ações: suaviza entre ticks reais (sem jitter artificial)
       const imaActive = (snap && snap.blend > 0.15) || releasePull > 0.02;
       if (isNonCrypto && !imaActive) {
-        engine.visualPrice = engine.realPrice;
+        const lerp = Math.min(1, 0.62 * dt);
+        engine.visualPrice += (engine.realPrice - engine.visualPrice) * lerp;
+        if (Math.abs(engine.realPrice - engine.visualPrice) < engine.realPrice * 1e-9) {
+          engine.visualPrice = engine.realPrice;
+        }
         engine.velocity = 0;
         engine.inertia = 0;
         return;
@@ -1235,6 +1239,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       candleEngineRef.current.idleWanderOffset = 0;
       if (!isCryptoAssetRef.current) {
         const engine = candleEngineRef.current;
+        engine.realPrice = tickPrice;
+        engine.lastTickTime = tickTime;
+      } else {
+        const engine = candleEngineRef.current;
         engine.visualPrice = tickPrice;
         engine.velocity = 0;
         engine.inertia = 0;
@@ -1502,6 +1510,18 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           lastCandle.high = Math.max(lastCandle.high, visualPrice);
           lastCandle.low = Math.min(lastCandle.low, visualPrice);
           lastCandle.close = visualPrice;
+        }
+
+        // OTC/forex: live candle segue visualPrice interpolado entre ticks reais
+        if (
+          visualPrice > 0 &&
+          isFinite(visualPrice) &&
+          !isCryptoAssetRef.current &&
+          liveCandleRef.current
+        ) {
+          liveCandleRef.current.close = visualPrice;
+          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, visualPrice);
+          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, visualPrice);
         }
         
         // Atualizar indicadores (apenas com visualPrice válido)
