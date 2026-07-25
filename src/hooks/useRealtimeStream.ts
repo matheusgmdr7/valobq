@@ -67,6 +67,10 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
   const [marketStatus, setMarketStatus] = useState<MarketStatusInfo | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const onTickRef = useRef(onTick);
+  useEffect(() => {
+    onTickRef.current = onTick;
+  }, [onTick]);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const lastMessageAtRef = useRef(Date.now());
@@ -184,7 +188,9 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
 
             setLastTick(tick);
 
-            if (onTick) {
+            if (onTickRef.current) {
+              onTickRef.current(tick);
+            } else if (onTick) {
               onTick(tick);
             }
           } else {
@@ -255,7 +261,7 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
       setError(err instanceof Error ? err.message : 'Erro desconhecido');
       isConnectingRef.current = false; // Resetar flag em caso de erro
     }
-  }, [wsUrl, onTick]); // Removido 'symbol' das dependências - mudanças de símbolo são gerenciadas pelo useEffect separado
+  }, [wsUrl]); // onTick via onTickRef — evita reconectar ao mudar callback
 
   /**
    * Desconecta do WebSocket

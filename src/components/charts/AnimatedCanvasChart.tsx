@@ -8,7 +8,7 @@
 'use client';
 
 import React, { useEffect, useRef, useImperativeHandle, forwardRef, useCallback, useState } from 'react';
-import { useRealtimeStream } from '@/hooks/useRealtimeStream';
+import { useRealtimeStream, type RealtimeTick } from '@/hooks/useRealtimeStream';
 import { logger } from '@/utils/logger';
 import { IndicatorEngine, CandleData as IndicatorCandleData } from '@/utils/indicators';
 import { supabase } from '@/lib/supabase';
@@ -1005,29 +1005,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       
     }, [indicators]);
 
-    // Hook para dados em tempo real via WebSocket
-    const { isConnected, lastTick, error, marketStatus } = useRealtimeStream({
-      symbol,
-      wsUrl: process.env.NEXT_PUBLIC_MARKET_DATA_WS_URL || 'ws://localhost:8080'
-    });
-    
-    // Propagar status do mercado para o componente pai
-    useEffect(() => {
-      if (onMarketStatusChange) {
-        onMarketStatusChange(marketStatus);
-      }
-    }, [marketStatus, onMarketStatusChange]);
-    
-    // CRYPTO: Confirmar detecção via marketStatus (chega antes dos ticks)
-    useEffect(() => {
-      if (marketStatus?.category === 'crypto') {
-        isCryptoAssetRef.current = true;
-      } else if (marketStatus?.category) {
-        isCryptoAssetRef.current = false;
-      }
-    }, [marketStatus]);
+    const marketStatusRef = useRef<{ category?: string } | null>(null);
 
-    // ===== PROCESSAMENTO DE TICKS — CAMINHO UNIFICADO =====
+    // Hook para dados em tempo real via WebSocket — conectado após processIncomingTick (abaixo)
     // Crypto (Binance): isClosed explícito da API
     // Forex/OTC: isClosed=false + detecção de mudança de período (mesmo fluxo)
     // Regra de ouro: open do live candle = close do último candle no histórico. Sempre.
@@ -1137,10 +1117,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       lastCandleTimeRef.current = chartPeriod;
     }, [timeframe, freezeLiveCandle, createLiveCandle]);
 
-    useEffect(() => {
-      if (!lastTick || !historicalDataLoadedRef.current) return;
+    const processIncomingTick = useCallback((tick: RealtimeTick) => {
+      if (!historicalDataLoadedRef.current) return;
 
-      const tick = lastTick;
       const tickPrice = tick.price;
       const tickTime = tick.timestamp;
 
@@ -1165,15 +1144,15 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         return;
       }
 
-      if (marketStatus?.category === 'crypto') {
+      const ms = marketStatusRef.current;
+      if (ms?.category === 'crypto') {
         isCryptoAssetRef.current = true;
-      } else if (marketStatus?.category || tick.isOTC) {
+      } else if (ms?.category || tick.isOTC) {
         isCryptoAssetRef.current = false;
       } else if (tick.isClosed !== undefined) {
         isCryptoAssetRef.current = true;
       }
 
-      // Primeiro tick após histórico: sincronizar motor sem distorcer candles históricos
       if (firstTickAfterHistoryRef.current) {
         firstTickAfterHistoryRef.current = false;
         const engine = candleEngineRef.current;
@@ -1196,7 +1175,6 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         engine.realPrice = tickPrice;
         engine.lastTickTime = tickTime;
 
-        // isClosed do servidor é sempre 1m (KlineAggregator/Binance); só fechar quando o período do gráfico virou
         const tickChartPeriod = getBarTime(tickTime, timeframe);
         const lastHist = candlesRef.current[candlesRef.current.length - 1];
         const livePeriod = liveCandleRef.current
@@ -1244,6 +1222,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             freezeLiveCandle();
             createLiveCandle(periodStart, tickPrice, tickTime);
           } else {
+            liveCandleRef.current.close = tickPrice;
             liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
             liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
             const engine = candleEngineRef.current;
@@ -1262,7 +1241,25 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
 
       if (onPriceUpdate) onPriceUpdate(tickPrice);
-    }, [lastTick, timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle, marketStatus]);
+    }, [timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle, syncChartLoadingState]);
+
+    const { isConnected, error, marketStatus } = useRealtimeStream({
+      symbol,
+      wsUrl: process.env.NEXT_PUBLIC_MARKET_DATA_WS_URL || 'ws://localhost:8080',
+      onTick: processIncomingTick,
+    });
+
+    useEffect(() => {
+      marketStatusRef.current = marketStatus;
+      if (onMarketStatusChange) {
+        onMarketStatusChange(marketStatus);
+      }
+      if (marketStatus?.category === 'crypto') {
+        isCryptoAssetRef.current = true;
+      } else if (marketStatus?.category) {
+        isCryptoAssetRef.current = false;
+      }
+    }, [marketStatus, onMarketStatusChange]);
 
     // Virada de candle pelo relógio — sincronizada com o timer lateral (MM:SS) e currentTime do gráfico
     useEffect(() => {
