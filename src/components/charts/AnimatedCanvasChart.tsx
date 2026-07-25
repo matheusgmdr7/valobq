@@ -277,6 +277,9 @@ function formatPrice(price: number, priceRange: number, isCrypto = false): strin
   if (isCrypto) {
     return price.toFixed(3);
   }
+  if (priceRange < 2 && price > 0 && price < 10) {
+    return price.toFixed(5);
+  }
   // Determinar casas decimais pelo range, com teto de 4 (menos tremor na seta de preço)
   if (priceRange >= 1000) {
     return price.toFixed(2);
@@ -1177,12 +1180,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
       if (firstTickAfterHistoryRef.current) {
         firstTickAfterHistoryRef.current = false;
-        const refPrice = liveCandleRef.current?.close
-          ?? candlesRef.current[candlesRef.current.length - 1]?.close
-          ?? tickPrice;
         const engine = candleEngineRef.current;
         engine.realPrice = tickPrice;
-        engine.visualPrice = refPrice;
+        engine.visualPrice = tickPrice;
         engine.velocity = 0;
         engine.inertia = 0;
       }
@@ -1261,6 +1261,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       if (!isCryptoAssetRef.current) {
         const engine = candleEngineRef.current;
         engine.realPrice = tickPrice;
+        engine.visualPrice = tickPrice;
+        engine.velocity = 0;
+        engine.inertia = 0;
         engine.lastTickTime = tickTime;
       } else {
         const engine = candleEngineRef.current;
@@ -1895,26 +1898,26 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       // Desenhar valores na régua de preços (lado direito) - design moderno
       ctx.textAlign = 'right';
       
-      // Calcular último preço para destacar - usar visualPrice do motor de física
+      // Calcular último preço para destacar - usar visualPrice (mesma base do live candle)
       const engine = candleEngineRef.current;
-      const currentVisualPrice = engine.visualPrice || (visibleCandles.length > 0 ? visibleCandles[visibleCandles.length - 1].close : null);
-      
-      // Suavizar o preço exibido no retângulo azul (crypto); forex usa preço real do tick
-      if (currentVisualPrice !== null && currentVisualPrice > 0) {
+      const markerPrice = engine.visualPrice > 0
+        ? engine.visualPrice
+        : engine.realPrice > 0
+          ? engine.realPrice
+          : (visibleCandles.length > 0 ? visibleCandles[visibleCandles.length - 1].close : null);
+
+      if (markerPrice !== null && markerPrice > 0) {
         if (!isCryptoAssetRef.current) {
-          displayedPriceRef.current = engine.realPrice;
+          displayedPriceRef.current = markerPrice;
         } else if (displayedPriceRef.current === 0) {
-          displayedPriceRef.current = currentVisualPrice;
+          displayedPriceRef.current = markerPrice;
         } else {
           const smoothingFactor = 0.08;
-          displayedPriceRef.current = displayedPriceRef.current + (currentVisualPrice - displayedPriceRef.current) * smoothingFactor;
+          displayedPriceRef.current = displayedPriceRef.current + (markerPrice - displayedPriceRef.current) * smoothingFactor;
         }
       }
-      
-      // Para a linha azul e círculo pulsante, usar o preço atual direto (sem suavização) para eliminar delay
-      const lastPriceForLine = currentVisualPrice !== null && currentVisualPrice > 0 
-        ? currentVisualPrice 
-        : (visibleCandles.length > 0 ? visibleCandles[visibleCandles.length - 1].close : null);
+
+      const lastPriceForLine = markerPrice;
       const lastPriceY = lastPriceForLine !== null 
         ? chartY + chartHeight - ((lastPriceForLine - actualMinPrice) / actualPriceRange) * chartHeight
         : null;
