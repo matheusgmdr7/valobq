@@ -30,53 +30,59 @@ export interface OTCConfig {
   momentumCarry?: number;
   /** Escala do momentum no preço (padrão 0.3) */
   momentumScale?: number;
+  /** Desvio máximo do preço-âncora (ex.: 0.004 = 0,4% — forex) */
+  maxDeviationPercent?: number;
 }
 
 /** Configurações por categoria de ativo */
 const OTC_CONFIGS: Record<string, OTCConfig> = {
   forex: {
-    volatility: 0.00014,
-    meanReversionSpeed: 0.0015,
-    tickIntervalMs: 4,
+    volatility: 0.000028,
+    meanReversionSpeed: 0.005,
+    tickIntervalMs: 60,
     spreadPercent: 0.001,
-    maxTrendStrength: 0.00005,
-    trendDurationTicks: 90,
-    trendIdleProbability: 0.08,
-    momentumCarry: 0.32,
-    momentumScale: 0.48,
+    maxTrendStrength: 0.00001,
+    trendDurationTicks: 140,
+    trendIdleProbability: 0.34,
+    momentumCarry: 0.14,
+    momentumScale: 0.2,
+    maxDeviationPercent: 0.0035,
   },
   stocks: {
-    volatility: 0.00018,
-    meanReversionSpeed: 0.0035,
-    tickIntervalMs: 4,
+    volatility: 0.000055,
+    meanReversionSpeed: 0.004,
+    tickIntervalMs: 45,
     spreadPercent: 0.01,
-    maxTrendStrength: 0.00006,
-    trendDurationTicks: 70,
-    trendIdleProbability: 0.06,
-    momentumCarry: 0.32,
-    momentumScale: 0.48,
+    maxTrendStrength: 0.000022,
+    trendDurationTicks: 90,
+    trendIdleProbability: 0.28,
+    momentumCarry: 0.2,
+    momentumScale: 0.28,
+    maxDeviationPercent: 0.012,
   },
   indices: {
-    volatility: 0.00015,
-    meanReversionSpeed: 0.003,
-    tickIntervalMs: 4,
+    volatility: 0.000042,
+    meanReversionSpeed: 0.004,
+    tickIntervalMs: 50,
     spreadPercent: 0.005,
-    maxTrendStrength: 0.000055,
-    trendDurationTicks: 75,
-    trendIdleProbability: 0.06,
-    momentumCarry: 0.32,
-    momentumScale: 0.48,
+    maxTrendStrength: 0.000018,
+    trendDurationTicks: 100,
+    trendIdleProbability: 0.3,
+    momentumCarry: 0.18,
+    momentumScale: 0.25,
+    maxDeviationPercent: 0.008,
   },
   commodities: {
-    volatility: 0.00016,
-    meanReversionSpeed: 0.003,
-    tickIntervalMs: 4,
+    volatility: 0.000048,
+    meanReversionSpeed: 0.004,
+    tickIntervalMs: 50,
     spreadPercent: 0.008,
-    maxTrendStrength: 0.000055,
-    trendDurationTicks: 70,
-    trendIdleProbability: 0.06,
-    momentumCarry: 0.32,
-    momentumScale: 0.48,
+    maxTrendStrength: 0.00002,
+    trendDurationTicks: 85,
+    trendIdleProbability: 0.28,
+    momentumCarry: 0.18,
+    momentumScale: 0.26,
+    maxDeviationPercent: 0.01,
   },
 };
 
@@ -191,6 +197,7 @@ class OTCSymbolEngine {
       trendIdleProbability = 0.4,
       momentumCarry = 0.2,
       momentumScale = 0.3,
+      maxDeviationPercent = 0.02,
     } = this.config;
 
     const idleHalf = trendIdleProbability / 2;
@@ -223,25 +230,14 @@ class OTCSymbolEngine {
     this.momentum = this.momentum * 0.5 + (this.currentPrice - this.lastPrice) * momentumCarry;
     const momentumComponent = this.momentum * momentumScale;
     
-    // 6. Calcular novo preço (garantir movimento mínimo visível por tick)
+    // 6. Calcular novo preço
     this.lastPrice = this.currentPrice;
-    let priceChange = trendComponent + meanReversionComponent + randomComponent + momentumComponent;
-    const minStep = this.currentPrice * 0.000006;
-    if (Math.abs(priceChange) < minStep) {
-      const dir =
-        this.trendDirection !== 0
-          ? this.trendDirection
-          : this.momentum !== 0
-            ? Math.sign(this.momentum)
-            : this.gaussianRandom() >= 0
-              ? 1
-              : -1;
-      priceChange = dir * minStep;
-    }
+    const priceChange =
+      trendComponent + meanReversionComponent + randomComponent + momentumComponent;
     this.currentPrice = this.currentPrice + priceChange;
-    
-    // 7. Garantir que o preço não fique negativo ou excessivamente distante
-    const maxDeviation = this.basePrice * 0.02; // 2% de desvio máximo do preço base
+
+    // 7. Limitar desvio do preço-âncora (evita candles desproporcionais)
+    const maxDeviation = this.basePrice * maxDeviationPercent;
     const deviation = Math.abs(this.currentPrice - this.basePrice);
     if (deviation > maxDeviation) {
       const pullStrength = 0.05 + 0.15 * ((deviation - maxDeviation) / maxDeviation);

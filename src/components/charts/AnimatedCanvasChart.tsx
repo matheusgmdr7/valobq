@@ -879,7 +879,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const imaActive = (snap && snap.blend > 0.15) || releasePull > 0.02;
       if (isNonCrypto && !imaActive) {
         // Mesmo modelo da crypto: atração rápida ao preço do tick (sem jitter)
-        const smoothingFactor = engine.acceleration * 2.2;
+        const smoothingFactor = engine.acceleration * 0.85;
         engine.visualPrice += (engine.realPrice - engine.visualPrice) * (smoothingFactor * dt);
         if (Math.abs(engine.realPrice - engine.visualPrice) < engine.realPrice * 1e-9) {
           engine.visualPrice = engine.realPrice;
