@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Confirme seu cadastro</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
+  <!--
+    LOGO: substitua BROKER_LOGO_URL pela URL pública do logo (Admin → broker_logo_light
+    ou Supabase Storage → broker-assets). Exemplo:
+    https://SEU-PROJETO.supabase.co/storage/v1/object/public/broker-assets/logo.png
+  -->
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f3f4f6;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:520px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 100%);padding:28px 32px;text-align:center;">
+              <img src="BROKER_LOGO_URL" alt="Broker" width="180" style="display:block;margin:0 auto;max-height:52px;width:auto;height:auto;" />
+              <div style="color:#bfdbfe;font-size:13px;margin-top:10px;">Plataforma de Negociação</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <h1 style="margin:0 0 12px;font-size:22px;color:#111827;">Confirme seu email</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#4b5563;">
+                Olá! Obrigado por se cadastrar. Para ativar sua conta e começar a operar, confirme seu endereço de email:
+              </p>
+              <p style="margin:0 0 8px;font-size:14px;color:#6b7280;">Conta: <strong>{{ .Email }}</strong></p>
+              <table role="presentation" cellspacing="0" cellpadding="0" style="margin:28px 0;">
+                <tr>
+                  <td style="border-radius:8px;background:#2563eb;">
+                    <a href="{{ .ConfirmationURL }}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;">
+                      Confirmar meu email
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 12px;font-size:13px;line-height:1.6;color:#6b7280;">
+                Se o botão não funcionar, copie e cole este link no navegador:
+              </p>
+              <p style="margin:0;font-size:12px;line-height:1.5;color:#2563eb;word-break:break-all;">{{ .ConfirmationURL }}</p>
+              <hr style="margin:28px 0;border:none;border-top:1px solid #e5e7eb;" />
+              <p style="margin:0;font-size:12px;line-height:1.6;color:#9ca3af;">
+                Se você não criou esta conta, ignore este email. Este link expira em breve por motivos de segurança.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#f9fafb;padding:20px 32px;text-align:center;border-top:1px solid #e5e7eb;">
+              <p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.5;">
+                Toda negociação envolve risco. Opere com responsabilidade.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

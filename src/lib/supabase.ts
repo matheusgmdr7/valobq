@@ -235,12 +235,25 @@ export type Database = {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://tgrhgkqpqsnkhewnmarr.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRncmhna3FwcXNua2hld25tYXJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMzI3MzEsImV4cCI6MjA4MzkwODczMX0.Am-rYaY9wiIBbXAirbkZj0gau5kxR_Dx2QiMrQC2xns';
 
+// Fila serializada — evita corrida entre signUp/getSession (travava "Registrando...")
+let authLockQueue: Promise<unknown> = Promise.resolve();
+
+function runAuthLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = authLockQueue.then(() => fn());
+  authLockQueue = run.catch(() => {});
+  return run;
+}
+
 // Client sempre criado - com lock customizado para evitar travamento do navigator.locks
 export const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
-    // Substituir navigator.locks por execução direta (evita travamento intermitente)
-    lock: async (name: string, acquireTimeout: number, fn: () => Promise<any>) => {
-      return await fn();
+    // Troca manual do ?code= em authSessionFromUrl — evita corrida com detectSessionInUrl
+    detectSessionInUrl: false,
+    flowType: 'pkce',
+    persistSession: true,
+    autoRefreshToken: true,
+    lock: async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => {
+      return runAuthLock(fn);
     },
   },
 });

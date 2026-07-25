@@ -6,6 +6,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/utils/logger';
+import { showEmailConfirmedToast } from '@/lib/emailVerificationToast';
+import { toast } from 'react-hot-toast';
 
 type Language = 'pt' | 'en' | 'es';
 
@@ -49,14 +51,24 @@ const LoginPage: React.FC = () => {
   const [selectedPhoneCountry, setSelectedPhoneCountry] = useState<CountryOption>(countries[0]);
   const [showPhoneCountryDropdown, setShowPhoneCountryDropdown] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [showResendConfirmation, setShowResendConfirmation] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [registerNotice, setRegisterNotice] = useState<string | null>(null);
   const countryDropdownRef = useRef<HTMLDivElement>(null);
   const phoneCountryDropdownRef = useRef<HTMLDivElement>(null);
   
-  const { login, register, loading } = useAuth();
+  const { login, register, forgotPassword, resendConfirmationEmail, loading } = useAuth();
   const router = useRouter();
   const [returnUrl, setReturnUrl] = useState<string | null>(null);
-  const [brokerLogo, setBrokerLogo] = useState<string | null>(null);
-  const [brokerName, setBrokerName] = useState<string>('VALOREN');
+  const [brokerLogo, setBrokerLogo] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem('broker_logo_light') || localStorage.getItem('broker_logo');
+  });
+  const [brokerName, setBrokerName] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'VALOREN';
+    return localStorage.getItem('broker_name') || 'VALOREN';
+  });
 
   const selectedLanguage = languages.find(lang => lang.code === language) || languages[0];
 
@@ -70,42 +82,30 @@ const LoginPage: React.FC = () => {
         // Primeiro, tentar carregar do Supabase (priorizar logoLight para fundo branco)
         if (supabase) {
           try {
-            const { data: logoLightData } = await supabase
-              .from('platform_settings')
-              .select('value')
-              .eq('key', 'broker_logo_light')
-              .single();
-            
+            const [logoLightRes, logoRes, nameRes] = await Promise.all([
+              supabase.from('platform_settings').select('value').eq('key', 'broker_logo_light').maybeSingle(),
+              supabase.from('platform_settings').select('value').eq('key', 'broker_logo').maybeSingle(),
+              supabase.from('platform_settings').select('value').eq('key', 'broker_name').maybeSingle(),
+            ]);
+
+            const logoLightData = logoLightRes.data;
+            const logoData = logoRes.data;
+            const nameData = nameRes.data;
+
             if (logoLightData?.value) {
               logoUrl = logoLightData.value as string;
               localStorage.setItem('broker_logo_light', logoUrl);
-            } else {
-              // Fallback: tentar logo padrão
-              const { data: logoData } = await supabase
-                .from('platform_settings')
-                .select('value')
-                .eq('key', 'broker_logo')
-                .single();
-              
-              if (logoData?.value) {
-                logoUrl = logoData.value as string;
-                localStorage.setItem('broker_logo', logoUrl);
-              }
+            } else if (logoData?.value) {
+              logoUrl = logoData.value as string;
+              localStorage.setItem('broker_logo', logoUrl);
             }
-            
-            // Buscar nome da broker
-            const { data: nameData } = await supabase
-              .from('platform_settings')
-              .select('value')
-              .eq('key', 'broker_name')
-              .single();
-            
+
             if (nameData?.value) {
               brokerNameValue = nameData.value as string;
               localStorage.setItem('broker_name', brokerNameValue);
             }
-          } catch (error) {
-            // Fallback para localStorage
+          } catch {
+            // Fallback para localStorage já aplicado no state inicial
           }
         }
         
@@ -131,12 +131,22 @@ const LoginPage: React.FC = () => {
     loadBrokerData();
   }, []);
   
-  // Ler returnUrl da URL ao montar o componente
+  // Ler returnUrl e mensagens da URL ao montar o componente
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const url = params.get('returnUrl');
       setReturnUrl(url);
+
+      if (params.get('confirmed') === '1') {
+        setRegisterNotice(null);
+        showEmailConfirmedToast();
+        window.history.replaceState({}, '', '/login');
+      }
+      if (params.get('reset') === '1') {
+        toast.success('Senha redefinida! Faça login com sua nova senha.');
+        window.history.replaceState({}, '', '/login');
+      }
     }
   }, []);
 
@@ -164,26 +174,51 @@ const LoginPage: React.FC = () => {
   }, [showLanguageDropdown, showCountryDropdown, showPhoneCountryDropdown]);
 
   const handleLogin = async (email: string, password: string) => {
-    const success = await login({ email, password });
-    if (success) {
-      // Redirecionar para a URL de retorno se existir, senão para dashboard/trading
+    const result = await login({ email, password });
+    if (result === 'dashboard') {
+      setRegisterNotice(null);
       router.push(returnUrl || '/dashboard/trading');
+    } else if (result === 'profile') {
+      localStorage.setItem('profile_active_section', 'personal-data');
+      router.push('/profile');
     }
   };
 
   const handleRegister = async (firstName: string, lastName: string, email: string, password: string, phoneNumber?: string) => {
     const fullName = `${firstName} ${lastName}`.trim();
-    const success = await register({ name: fullName, email, password, confirmPassword: password });
-    if (success) {
-      // Salvar telefone se fornecido
+    const result = await register({ name: fullName, email, password, confirmPassword: password });
+    if (result === 'confirmation_sent') {
+      setRecoveryEmail(email);
+      setRegisterNotice(`Enviamos um email de confirmação para ${email}. Confirme para fazer login.`);
+      setIsLogin(true);
+      return;
+    }
+    if (result === 'logged_in') {
       if (phoneNumber) {
         const phoneWithCode = phoneNumber.startsWith('+') ? phoneNumber : `${selectedPhoneCountry.phoneCode} ${phoneNumber}`;
         localStorage.setItem('user_phone', phoneWithCode);
       }
-      // Salvar nome e sobrenome separados
       localStorage.setItem('user_firstName', firstName);
       localStorage.setItem('user_lastName', lastName);
+      localStorage.setItem('profile_active_section', 'personal-data');
       router.push('/profile');
+      return;
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = await forgotPassword(recoveryEmail);
+    if (success) {
+      setShowForgotPassword(false);
+    }
+  };
+
+  const handleResendConfirmation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = await resendConfirmationEmail(recoveryEmail);
+    if (success) {
+      setShowResendConfirmation(false);
     }
   };
 
@@ -252,6 +287,12 @@ const LoginPage: React.FC = () => {
           {isLogin ? (
             <div className="bg-white">
               <h2 className="text-3xl font-bold text-gray-900 mb-8 text-center">Entrar</h2>
+
+              {registerNotice && (
+                <div className="mb-6 rounded-xl border border-blue-200/80 bg-gradient-to-br from-blue-50 to-indigo-50 px-4 py-3.5 shadow-sm">
+                  <p className="text-sm font-medium text-blue-900">{registerNotice}</p>
+                </div>
+              )}
               
               <form onSubmit={(e) => {
                 e.preventDefault();
@@ -323,12 +364,20 @@ const LoginPage: React.FC = () => {
               </button>
 
               {/* Forgot Password Link */}
-              <div className="mt-6 text-center">
+              <div className="mt-6 text-center space-y-2">
                 <button
                   type="button"
-                  className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-blue-600 hover:text-blue-700 text-sm font-medium block w-full"
                 >
                   Esqueceu a senha?
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowResendConfirmation(true)}
+                  className="text-gray-500 hover:text-gray-700 text-xs"
+                >
+                  Reenviar email de confirmação
                 </button>
               </div>
 
@@ -538,6 +587,82 @@ const LoginPage: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* Modal: Esqueceu a senha */}
+      {showForgotPassword && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Recuperar senha</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Informe seu email. Enviaremos um link para redefinir sua senha na {brokerName}.
+            </p>
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <input
+                type="email"
+                value={recoveryEmail}
+                onChange={(e) => setRecoveryEmail(e.target.value)}
+                required
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                placeholder="Seu email"
+              />
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(false)}
+                  className="flex-1 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+                >
+                  {loading ? 'Enviando...' : 'Enviar link'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Reenviar confirmação */}
+      {showResendConfirmation && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Confirmar email</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Não recebeu o email de confirmação? Informe seu email para reenviar.
+            </p>
+            <form onSubmit={handleResendConfirmation} className="space-y-4">
+              <input
+                type="email"
+                value={recoveryEmail}
+                onChange={(e) => setRecoveryEmail(e.target.value)}
+                required
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                placeholder="Seu email"
+              />
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowResendConfirmation(false)}
+                  className="flex-1 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+                >
+                  {loading ? 'Enviando...' : 'Reenviar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

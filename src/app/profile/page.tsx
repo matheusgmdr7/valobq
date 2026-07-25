@@ -2,13 +2,13 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { 
   Camera, ChevronDown, CheckCircle2, Bell, Settings, Shield, Calendar, MessageCircle, RotateCcw, Download, XCircle, Search, Lock, Key, Monitor, LogOut, ArrowRight, DollarSign, Wallet, Briefcase, HelpCircle, User, X, Mail, Phone, FileText, Upload, CheckCircle, Clock, History, ArrowLeft, Maximize2, Paperclip, Smile, Send, MessageSquare
 } from 'lucide-react';
 import { createChat, sendMessage, getChatMessages, getUserChats, Chat, ChatMessage } from '@/services/chatService';
 import { toast } from 'react-hot-toast';
-import { supabase } from '@/lib/supabase';
 import { logger } from '@/utils/logger';
 
 type Language = 'pt' | 'en' | 'es';
@@ -26,7 +26,7 @@ const languages: LanguageOption[] = [
 ];
 
 const ProfilePage: React.FC = () => {
-  const { user, loading, logout, activeBalance, accountType } = useAuth();
+  const { user, loading, logout, activeBalance, accountType, emailVerified, resendConfirmationEmail, refreshEmailVerified } = useAuth();
   const router = useRouter();
   const [brokerLogo, setBrokerLogo] = useState<string | null>(null);
   const [brokerName, setBrokerName] = useState<string>('POLARIUM BROKER');
@@ -123,15 +123,15 @@ const ProfilePage: React.FC = () => {
   
   // KYC Verification states - inicializar com email e telefone aprovados se existirem
   const [verificationStatus, setVerificationStatus] = useState(() => {
-    const hasEmail = user?.email && user.email.includes('@');
     const hasPhone = typeof window !== 'undefined' && localStorage.getItem('user_phone');
     return {
-      email: hasEmail ? 'approved' as const : 'pending' as 'pending' | 'approved' | 'rejected',
+      email: 'pending' as 'pending' | 'approved' | 'rejected',
       phone: hasPhone ? 'approved' as const : 'pending' as 'pending' | 'approved' | 'rejected',
       personalDetails: 'pending' as 'pending' | 'approved' | 'rejected',
       proofOfIdentity: 'pending' as 'pending' | 'approved' | 'rejected',
     };
   });
+  const [resendingEmailConfirmation, setResendingEmailConfirmation] = useState(false);
   
   // Estados para saber se os documentos foram enviados (em análise)
   const [documentsSubmitted, setDocumentsSubmitted] = useState({
@@ -171,6 +171,38 @@ const ProfilePage: React.FC = () => {
       }));
     }
   }, [user?.email, user?.name]);
+
+  useEffect(() => {
+    if (user?.email) {
+      refreshEmailVerified();
+    }
+  }, [user?.email, refreshEmailVerified]);
+
+  useEffect(() => {
+    const syncOnFocus = () => {
+      if (document.visibilityState === 'visible' && user?.email) {
+        void refreshEmailVerified();
+      }
+    };
+    window.addEventListener('focus', syncOnFocus);
+    document.addEventListener('visibilitychange', syncOnFocus);
+    return () => {
+      window.removeEventListener('focus', syncOnFocus);
+      document.removeEventListener('visibilitychange', syncOnFocus);
+    };
+  }, [user?.email, refreshEmailVerified]);
+  
+  useEffect(() => {
+    if (emailVerified) {
+      setVerificationStatus(prev => (
+        prev.email === 'approved' ? prev : { ...prev, email: 'approved' }
+      ));
+    } else if (user?.email) {
+      setVerificationStatus(prev => (
+        prev.email === 'pending' ? prev : { ...prev, email: 'pending' }
+      ));
+    }
+  }, [emailVerified, user?.email]);
   
   // Carregar logo e nome da broker (logo para fundo branco)
   useEffect(() => {
@@ -365,10 +397,7 @@ const ProfilePage: React.FC = () => {
     try {
       if (!user) return;
       
-      // Email sempre aprovado se tiver email válido (vem do registro)
-      const emailVerified = user.email && user.email.includes('@');
-      if (emailVerified && user.email) {
-        setVerificationStatus(prev => ({ ...prev, email: 'approved' }));
+      if (user.email) {
         setVerificationData(prev => ({ ...prev, email: user.email }));
       }
       
@@ -422,9 +451,7 @@ const ProfilePage: React.FC = () => {
   };
   
   // Funções para validar se pode avançar para o próximo step
-  const canAccessPhone = () => {
-    return verificationData.email && verificationData.email.includes('@');
-  };
+  const canAccessPhone = () => emailVerified;
   
   const canAccessPersonalDetails = () => {
     return canAccessPhone() && verificationData.phone && verificationData.phone.length > 0;
@@ -654,11 +681,13 @@ const ProfilePage: React.FC = () => {
     return null;
   }
 
-  const formatDate = (date: Date) => {
+  const formatDate = (date: Date | string) => {
+    const d = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(d.getTime())) return '—';
     const months = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
-    const day = date.getDate();
-    const month = months[date.getMonth()];
-    const year = date.getFullYear();
+    const day = d.getDate();
+    const month = months[d.getMonth()];
+    const year = d.getFullYear();
     return `${day} de ${month}, ${year}`;
   };
 
@@ -1006,9 +1035,43 @@ const ProfilePage: React.FC = () => {
                         </button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <p className="text-base text-gray-900">{user.email}</p>
-                        <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-base text-gray-900">{user.email}</p>
+                          {emailVerified ? (
+                            <span className="inline-flex items-center gap-1 text-sm text-green-700 bg-green-50 px-2 py-0.5 rounded-full">
+                              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                              Verificado
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-sm text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full">
+                              <Clock className="w-4 h-4 flex-shrink-0" />
+                              Não verificado
+                            </span>
+                          )}
+                        </div>
+                        {!emailVerified && (
+                          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                            Confirme seu email para acessar o trading. Verifique sua caixa de entrada ou reenvie o link abaixo.
+                          </div>
+                        )}
+                        {!emailVerified && (
+                          <button
+                            type="button"
+                            disabled={resendingEmailConfirmation}
+                            onClick={async () => {
+                              setResendingEmailConfirmation(true);
+                              try {
+                                await resendConfirmationEmail(user.email);
+                              } finally {
+                                setResendingEmailConfirmation(false);
+                              }
+                            }}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm disabled:opacity-60"
+                          >
+                            {resendingEmailConfirmation ? 'Enviando...' : 'Reenviar email de verificação'}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1245,16 +1308,27 @@ const ProfilePage: React.FC = () => {
                           E-mail confirmado
                         </div>
                       )}
-                      {!verificationStatus.email && verificationData.email && (
-                        <button
-                          onClick={() => {
-                            setVerificationStatus(prev => ({ ...prev, email: 'approved' }));
-                            toast.success('E-mail confirmado!');
-                          }}
-                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                        >
-                          Confirmar E-mail
-                        </button>
+                      {verificationStatus.email !== 'approved' && verificationData.email && (
+                        <div className="space-y-2">
+                          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                            Seu email ainda não foi verificado. Sem a confirmação, o trading permanece bloqueado.
+                          </p>
+                          <button
+                            type="button"
+                            disabled={resendingEmailConfirmation}
+                            onClick={async () => {
+                              setResendingEmailConfirmation(true);
+                              try {
+                                await resendConfirmationEmail(verificationData.email);
+                              } finally {
+                                setResendingEmailConfirmation(false);
+                              }
+                            }}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm disabled:opacity-60"
+                          >
+                            {resendingEmailConfirmation ? 'Enviando...' : 'Reenviar email de confirmação'}
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

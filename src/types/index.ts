@@ -11,6 +11,8 @@ export interface User {
   role?: 'user' | 'admin';
   /** IMA WIN / IMA LOSS — influencia preço de fechamento no gráfico */
   outcomeControl?: OutcomeControl;
+  /** Confirmado pelo link enviado no cadastro (coluna users.email_verified) */
+  emailVerified?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
