@@ -37,7 +37,7 @@ const OTC_CONFIGS: Record<string, OTCConfig> = {
   forex: {
     volatility: 0.00008,
     meanReversionSpeed: 0.0015,
-    tickIntervalMs: 15,
+    tickIntervalMs: 8,
     spreadPercent: 0.001,
     maxTrendStrength: 0.000035,
     trendDurationTicks: 90,
@@ -48,7 +48,7 @@ const OTC_CONFIGS: Record<string, OTCConfig> = {
   stocks: {
     volatility: 0.00016,
     meanReversionSpeed: 0.0035,
-    tickIntervalMs: 25,
+    tickIntervalMs: 12,
     spreadPercent: 0.01,
     maxTrendStrength: 0.00008,
     trendDurationTicks: 70,
