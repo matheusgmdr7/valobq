@@ -4,7 +4,7 @@
  * Single Source of Truth (SSoT) para dados de mercado
  * 
  * Arquitetura:
- * - Crypto: Binance WebSocket (kline_1m) → broadcast direto (já traz OHLC + isClosed)
+ * - Crypto: Binance aggTrade + kline_1m → broadcast (preço vivo + fechamento 1m)
  * - Forex/Ações/Commodities: Motor Sintético (padrão) ou TwelveData WS se *_SYNTHETIC_ONLY=false → KlineAggregator 1m
  */
 
@@ -178,6 +178,61 @@ async function saveToRedis(tick: CanonicalTick): Promise<void> {
 
 // ===== BINANCE (Crypto) =====
 
+/** OHLC 1m da Binance — aggTrade atualiza preço; kline_1m fecha período e sincroniza OHLC */
+const binanceKlineSnapshot = new Map<
+  string,
+  { open: number; high: number; low: number; close: number; volume: number }
+>();
+
+function nextTickTimestamp(symbol: string): number {
+  const baseTimestamp = Date.now();
+  const counter = (tickCounter.get(symbol) || 0) + 1;
+  tickCounter.set(symbol, counter);
+  return baseTimestamp + (counter % 1000);
+}
+
+function emitBinanceTick(
+  symbol: string,
+  price: number,
+  opts: {
+    isClosed: boolean;
+    open?: number;
+    high?: number;
+    low?: number;
+    volume?: number;
+  },
+): void {
+  if (!price || !isFinite(price) || price <= 0) return;
+
+  let snap = binanceKlineSnapshot.get(symbol);
+  if (!snap) {
+    snap = { open: price, high: price, low: price, close: price, volume: 0 };
+    binanceKlineSnapshot.set(symbol, snap);
+  }
+
+  if (opts.open !== undefined) snap.open = opts.open;
+  if (opts.volume !== undefined) snap.volume = opts.volume;
+  snap.high = Math.max(snap.high, opts.high ?? price, price);
+  snap.low = Math.min(snap.low, opts.low ?? price, price);
+  snap.close = price;
+
+  const tick: CanonicalTick = {
+    symbol,
+    price,
+    timestamp: nextTickTimestamp(symbol),
+    volume: snap.volume,
+    open: snap.open,
+    high: snap.high,
+    low: snap.low,
+    close: snap.close,
+    isClosed: opts.isClosed,
+    bid: snap.low,
+    ask: snap.high,
+  };
+
+  processTick(tick);
+}
+
 function connectBinance(symbol: string): void {
   let binanceSymbol = symbol.replace('/', '').toUpperCase();
   
@@ -192,7 +247,9 @@ function connectBinance(symbol: string): void {
     binanceSymbol = symbol.replace('/', '').toUpperCase();
   }
   
-  const wsUrl = `wss://stream.binance.com:9443/ws/${binanceSymbol.toLowerCase()}@kline_1m`;
+  const streamKey = binanceSymbol.toLowerCase();
+  // aggTrade = preço em tempo real; kline_1m = OHLC oficial + isClosed
+  const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streamKey}@aggTrade/${streamKey}@kline_1m`;
   const ws = new WebSocket(wsUrl);
   const connection: UpstreamConnection = { ws, symbol, source: 'binance' };
   upstreamConnections.set(`binance:${symbol}`, connection);
@@ -201,7 +258,17 @@ function connectBinance(symbol: string): void {
   
   ws.on('message', (data: WebSocket.Data) => {
     try {
-      const message = JSON.parse(data.toString());
+      const envelope = JSON.parse(data.toString());
+      const message = envelope.data ?? envelope;
+      const stream: string = envelope.stream ?? '';
+
+      if (stream.includes('@aggTrade') || message.e === 'aggTrade') {
+        const price = parseFloat(message.p || '0');
+        if (!price || !isFinite(price) || price <= 0) return;
+        emitBinanceTick(symbol, price, { isClosed: false });
+        return;
+      }
+
       if (!message.k) return;
       
       const kline = message.k;
@@ -222,24 +289,33 @@ function connectBinance(symbol: string): void {
       const isCurrentPeriod = tickPeriodStart === currentPeriodStart || tickPeriodStart === (currentPeriodStart - PERIOD_MS);
       
       if (!isCurrentPeriod && isClosed) return;
-      
-      // CRÍTICO: Sempre usar Date.now() como timestamp do tick
-      // O startTime (kline.t) é o início do período, NÃO quando o dado chegou.
-      // Usar startTime para isClosed causava filtragem em processTick (tick de 60s atrás era descartado)
-      const baseTimestamp = Date.now();
-      const counter = (tickCounter.get(symbol) || 0) + 1;
-      tickCounter.set(symbol, counter);
-      const tickTimestamp = baseTimestamp + (counter % 1000);
-      
-      const tick: CanonicalTick = {
-        symbol, price: close, timestamp: tickTimestamp, volume,
-        open, high, low, close: close,
-        isClosed, bid: low, ask: high,
-      };
-      
-      processTick(tick);
+
+      if (isClosed) {
+        emitBinanceTick(symbol, close, {
+          isClosed: true,
+          open,
+          high,
+          low,
+          volume,
+        });
+        binanceKlineSnapshot.set(symbol, {
+          open: close,
+          high: close,
+          low: close,
+          close,
+          volume: 0,
+        });
+      } else {
+        binanceKlineSnapshot.set(symbol, {
+          open,
+          high,
+          low,
+          close,
+          volume,
+        });
+      }
     } catch {
-      console.error('[Binance] Erro ao processar kline para', symbol);
+      console.error('[Binance] Erro ao processar stream para', symbol);
     }
   });
   
@@ -592,7 +668,8 @@ function startServer(): void {
             }
           } else if (useOTC) {
             if (!otcManager.isActive(symbol)) {
-              startSyntheticForex(symbol, lastPrice > 0 ? lastPrice : undefined);
+              const anchor = lastRealPrices.get(symbol);
+              startSyntheticForex(symbol, anchor && anchor > 0 ? anchor : undefined);
             }
           } else {
             // Mercado aberto: TwelveData WS → fallback motor sintético

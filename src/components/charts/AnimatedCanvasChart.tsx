@@ -878,8 +878,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       // Forex/índices/commodities/ações: suaviza entre ticks reais (sem jitter artificial)
       const imaActive = (snap && snap.blend > 0.15) || releasePull > 0.02;
       if (isNonCrypto && !imaActive) {
-        const lerp = Math.min(1, 0.62 * dt);
-        engine.visualPrice += (engine.realPrice - engine.visualPrice) * lerp;
+        // Mesmo modelo da crypto: atração rápida ao preço do tick (sem jitter)
+        const smoothingFactor = engine.acceleration * 2.2;
+        engine.visualPrice += (engine.realPrice - engine.visualPrice) * (smoothingFactor * dt);
         if (Math.abs(engine.realPrice - engine.visualPrice) < engine.realPrice * 1e-9) {
           engine.visualPrice = engine.realPrice;
         }
@@ -1149,10 +1150,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
 
       const ms = marketStatusRef.current;
-      if (ms?.category === 'crypto') {
-        isCryptoAssetRef.current = true;
-      } else if (ms?.category || tick.isOTC) {
+      if (tick.isOTC || (ms?.category && ms.category !== 'crypto')) {
         isCryptoAssetRef.current = false;
+      } else if (ms?.category === 'crypto') {
+        isCryptoAssetRef.current = true;
       } else if (tick.isClosed !== undefined) {
         isCryptoAssetRef.current = true;
       }
