@@ -15,6 +15,7 @@ import { supabase } from '@/lib/supabase';
 import { ChartLoadingScreen } from '@/components/ui/ChartLoadingScreen';
 import type { OutcomeControl } from '@/utils/tradeSettlement';
 import { pickNearestSettlementSnap, getSettlementReleasePull } from '@/utils/tradeSettlement';
+import { Minus, Plus } from 'lucide-react';
 
 export type Timeframe = '1m' | '2m' | '5m' | '10m' | '15m' | '30m' | '1h' | '2h' | '4h' | '8h' | '12h' | '1d' | '1w' | '1M';
 
@@ -6433,6 +6434,29 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       },
     }));
 
+    const applyChartZoom = useCallback((direction: 'in' | 'out') => {
+      const viewport = viewportRef.current;
+      let newCandleCount: number;
+
+      if (direction === 'in') {
+        const target = Math.floor(viewport.visibleCandleCount * 0.85);
+        newCandleCount = Math.max(1, target < viewport.visibleCandleCount ? target : viewport.visibleCandleCount - 1);
+      } else {
+        const increase = Math.max(2, Math.ceil(viewport.visibleCandleCount * 0.15));
+        newCandleCount = Math.min(1000, viewport.visibleCandleCount + increase);
+        if (newCandleCount <= viewport.visibleCandleCount) {
+          newCandleCount = viewport.visibleCandleCount + 1;
+        }
+      }
+
+      viewport.visibleCandleCount = newCandleCount;
+      if (candlesRef.current.length > 0) {
+        const newMaxStartIndex = Math.max(0, candlesRef.current.length - newCandleCount);
+        viewport.visibleStartIndex = newMaxStartIndex;
+        viewport.isAtEnd = true;
+      }
+    }, []);
+
     return (
       <div 
         className={`animated-canvas-chart-container ${className}`} 
@@ -6535,6 +6559,32 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             }
           />
         )}
+        <div
+          className="pointer-events-auto absolute bottom-[max(0.375rem,env(safe-area-inset-bottom,0px))] left-1/2 z-20 flex -translate-x-1/2 items-stretch gap-px rounded-sm border border-white/10 bg-[#0d1117]/75 p-px shadow-md backdrop-blur-sm sm:bottom-2"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            aria-label="Zoom out"
+            title="Zoom out"
+            onClick={() => applyChartZoom('out')}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="flex h-6 w-6 touch-manipulation select-none items-center justify-center rounded-sm text-zinc-400 transition-[transform,background-color,color] duration-75 hover:bg-white/10 hover:text-zinc-100 active:scale-90 active:bg-white/15 sm:h-5 sm:w-5"
+          >
+            <Minus className="h-3 w-3 sm:h-2.5 sm:w-2.5" strokeWidth={2.5} />
+          </button>
+          <div className="w-px self-stretch bg-white/10" aria-hidden />
+          <button
+            type="button"
+            aria-label="Zoom in"
+            title="Zoom in"
+            onClick={() => applyChartZoom('in')}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="flex h-6 w-6 touch-manipulation select-none items-center justify-center rounded-sm text-zinc-400 transition-[transform,background-color,color] duration-75 hover:bg-white/10 hover:text-zinc-100 active:scale-90 active:bg-white/15 sm:h-5 sm:w-5"
+          >
+            <Plus className="h-3 w-3 sm:h-2.5 sm:w-2.5" strokeWidth={2.5} />
+          </button>
+        </div>
       </div>
     );
   }
