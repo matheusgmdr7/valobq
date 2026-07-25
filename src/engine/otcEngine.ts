@@ -34,14 +34,27 @@ export interface OTCConfig {
   maxDeviationPercent?: number;
   /** Limite máximo de variação por tick (% do preço, ex.: 0.000006 ≈ 0,06 pip em EUR/USD) */
   maxTickChangePercent?: number;
+  /** Ritmo variável (forex): alterna fases lentas/rápidas a cada 10–30 min */
+  rhythm?: OTCRhythmConfig;
+}
+
+export interface OTCRhythmConfig {
+  /** Duração mínima de cada fase (ms) */
+  phaseMinMs: number;
+  /** Duração máxima de cada fase (ms) */
+  phaseMaxMs: number;
+  /** Multiplicador de ritmo na fase lenta (< 1 = mais devagar) */
+  slowPace: number;
+  /** Multiplicador de ritmo na fase rápida (> 1 = mais rápido) */
+  fastPace: number;
 }
 
 /** Configurações por categoria de ativo */
 const OTC_CONFIGS: Record<string, OTCConfig> = {
   forex: {
-    volatility: 0.0000045,
+    volatility: 0.000004,
     meanReversionSpeed: 0.014,
-    tickIntervalMs: 180,
+    tickIntervalMs: 220,
     spreadPercent: 0.001,
     maxTrendStrength: 0.0000008,
     trendDurationTicks: 240,
@@ -49,7 +62,13 @@ const OTC_CONFIGS: Record<string, OTCConfig> = {
     momentumCarry: 0.02,
     momentumScale: 0.025,
     maxDeviationPercent: 0.001,
-    maxTickChangePercent: 0.000002,
+    maxTickChangePercent: 0.0000018,
+    rhythm: {
+      phaseMinMs: 10 * 60 * 1000,
+      phaseMaxMs: 30 * 60 * 1000,
+      slowPace: 0.58,
+      fastPace: 1.32,
+    },
   },
   stocks: {
     volatility: 0.000055,
@@ -117,8 +136,11 @@ class OTCSymbolEngine {
   private basePrice: number;       // Preço de referência (último preço real)
   private currentPrice: number;
   private lastPrice: number;
-  private interval: NodeJS.Timeout | null = null;
+  private tickTimer: NodeJS.Timeout | null = null;
   private onTick: (tick: OTCTick) => void;
+  
+  /** Âncora fixa para fases de ritmo determinísticas (todos os clientes iguais) */
+  private static readonly RHYTHM_EPOCH_MS = Date.UTC(2024, 0, 1);
   
   // Estado do modelo Ornstein-Uhlenbeck
   private meanPrice: number;       // Preço médio para reversão
@@ -160,37 +182,72 @@ class OTCSymbolEngine {
    * Inicia geração de ticks OTC
    */
   start(): void {
-    if (this.interval) return;
-    
-    this.interval = setInterval(() => {
-      this.generateTick();
-    }, this.config.tickIntervalMs);
-    
-    // Gerar primeiro tick imediatamente
+    if (this.tickTimer) return;
     this.generateTick();
+    this.scheduleNextTick();
   }
 
-  /**
-   * Para geração de ticks
-   */
   stop(): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
+    if (this.tickTimer) {
+      clearTimeout(this.tickTimer);
+      this.tickTimer = null;
     }
   }
 
-  /**
-   * Retorna se está rodando
-   */
   isRunning(): boolean {
-    return this.interval !== null;
+    return this.tickTimer !== null;
+  }
+
+  /** Próximo tick com intervalo dinâmico (forex: fases lentas/rápidas) */
+  private scheduleNextTick(): void {
+    const { intervalMs } = this.getRhythmScales(Date.now());
+    this.tickTimer = setTimeout(() => {
+      this.generateTick();
+      this.scheduleNextTick();
+    }, intervalMs);
+  }
+
+  /**
+   * Fase de ritmo determinística por símbolo — alterna lento/rápido a cada 10–30 min.
+   * pace < 1: ticks mais espaçados e menor volatilidade; pace > 1: o oposto.
+   */
+  private getRhythmScales(now: number): { intervalMs: number; volScale: number; maxTickScale: number } {
+    const base = this.config.tickIntervalMs;
+    const rhythm = this.config.rhythm;
+    if (!rhythm) {
+      return { intervalMs: base, volScale: 1, maxTickScale: 1 };
+    }
+
+    const { phaseMinMs, phaseMaxMs, slowPace, fastPace } = rhythm;
+    const span = Math.max(1, phaseMaxMs - phaseMinMs);
+    let phaseStart = OTCSymbolEngine.RHYTHM_EPOCH_MS;
+    let phaseIdx = 0;
+
+    while (phaseStart <= now) {
+      const phaseSeed = this.hashCode(`${this.symbol}:rhythm:${phaseIdx}`);
+      const duration = phaseMinMs + (phaseSeed % (span + 1));
+      const isFast = ((phaseSeed >> 6) % 2) === 0;
+      const pace = isFast ? fastPace : slowPace;
+
+      if (phaseStart + duration > now) {
+        return {
+          intervalMs: Math.max(80, Math.round(base / pace)),
+          volScale: pace,
+          maxTickScale: pace,
+        };
+      }
+      phaseStart += duration;
+      phaseIdx++;
+    }
+
+    return { intervalMs: base, volScale: 1, maxTickScale: 1 };
   }
 
   /**
    * Gera um tick sintético usando modelo Ornstein-Uhlenbeck com micro-tendências
    */
   private generateTick(): void {
+    const rhythm = this.getRhythmScales(Date.now());
     const {
       volatility,
       meanReversionSpeed,
@@ -204,6 +261,11 @@ class OTCSymbolEngine {
       maxTickChangePercent,
     } = this.config;
 
+    const effectiveVolatility = volatility * rhythm.volScale;
+    const effectiveMaxTick = maxTickChangePercent
+      ? maxTickChangePercent * rhythm.maxTickScale
+      : undefined;
+
     const idleHalf = trendIdleProbability / 2;
 
     // 1. Atualizar micro-tendência
@@ -216,7 +278,7 @@ class OTCSymbolEngine {
       } else {
         this.trendDirection = 0;
       }
-      this.trendStrength = this.nextRandom() * maxTrendStrength;
+      this.trendStrength = this.nextRandom() * maxTrendStrength * rhythm.volScale;
       this.trendTicksLeft = Math.floor(this.nextRandom() * trendDurationTicks) + 5;
     }
     this.trendTicksLeft--;
@@ -228,7 +290,7 @@ class OTCSymbolEngine {
     const meanReversionComponent = meanReversionSpeed * (this.meanPrice - this.currentPrice);
 
     // 4. Componente aleatório (ruído gaussiano)
-    const randomComponent = this.gaussianRandom() * volatility * this.currentPrice;
+    const randomComponent = this.gaussianRandom() * effectiveVolatility * this.currentPrice;
 
     // 5. Momentum (inércia do movimento anterior)
     this.momentum = this.momentum * 0.5 + (this.currentPrice - this.lastPrice) * momentumCarry;
@@ -240,8 +302,8 @@ class OTCSymbolEngine {
       trendComponent + meanReversionComponent + randomComponent + momentumComponent;
     this.currentPrice = this.currentPrice + priceChange;
 
-    if (maxTickChangePercent && maxTickChangePercent > 0) {
-      const maxDelta = this.currentPrice * maxTickChangePercent;
+    if (effectiveMaxTick && effectiveMaxTick > 0) {
+      const maxDelta = this.currentPrice * effectiveMaxTick;
       const delta = this.currentPrice - this.lastPrice;
       if (Math.abs(delta) > maxDelta) {
         this.currentPrice = this.lastPrice + Math.sign(delta) * maxDelta;
