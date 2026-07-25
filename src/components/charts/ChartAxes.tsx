@@ -53,18 +53,15 @@ export function ChartAxes({
 
   // Formatar preço
   const formatPrice = (price: number): string => {
-    // Determinar casas decimais baseado no range de preço
-    if (priceRange < 0.01) {
-      return price.toFixed(5);
-    } else if (priceRange < 0.1) {
+    // Determinar casas decimais baseado no range de preço (máx. 4)
+    if (priceRange < 0.1) {
       return price.toFixed(4);
     } else if (priceRange < 1) {
       return price.toFixed(3);
     } else if (priceRange < 10) {
       return price.toFixed(2);
-    } else {
-      return price.toFixed(1);
     }
+    return price.toFixed(1);
   };
 
   // Calcular posições dos labels de tempo (eixo X)

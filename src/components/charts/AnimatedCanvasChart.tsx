@@ -272,21 +272,17 @@ function groupCandlesByTimeframe(candles: CandleData[], targetTimeframe: Timefra
  * Formata o preço com precisão adequada baseado no range
  * Similar ao TradingView que ajusta a precisão automaticamente
  */
-function formatPrice(price: number, priceRange: number): string {
-  // Determinar número de casas decimais baseado no range
+function formatPrice(price: number, priceRange: number, isCrypto = false): string {
+  if (isCrypto) {
+    return price.toFixed(3);
+  }
+  // Determinar casas decimais pelo range, com teto de 4 (menos tremor na seta de preço)
   if (priceRange >= 1000) {
     return price.toFixed(2);
   } else if (priceRange >= 100) {
     return price.toFixed(3);
-  } else if (priceRange >= 10) {
-    return price.toFixed(4);
-  } else if (priceRange >= 1) {
-    return price.toFixed(5);
-  } else if (priceRange >= 0.1) {
-    return price.toFixed(6);
-  } else {
-    return price.toFixed(8);
   }
+  return price.toFixed(4);
 }
 
 export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCanvasChartProps>(
@@ -1782,7 +1778,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           ctx.font = '400 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif';
         
         // Formatar preço com precisão adequada
-        const priceStr = formatPrice(price, actualPriceRange);
+        const priceStr = formatPrice(price, actualPriceRange, isCryptoAssetRef.current);
         // Padding direito aumentado para evitar corte do texto no zoom máximo
         const textX = priceScaleX + priceScaleWidth - 12; // Aumentado de 8 para 12 para evitar corte
         ctx.fillText(priceStr, textX, y + 4);
@@ -1810,7 +1806,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
           ctx.textAlign = 'right';
           ctx.textBaseline = 'middle';
-          const entryPriceStr = formatPrice(trade.entryPrice, actualPriceRange);
+          const entryPriceStr = formatPrice(trade.entryPrice, actualPriceRange, isCryptoAssetRef.current);
           
           const textMetrics = ctx.measureText(entryPriceStr);
           const textWidth = textMetrics.width;
@@ -1852,7 +1848,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif';
           ctx.textAlign = 'right';
           ctx.textBaseline = 'middle';
-          const currentPriceStr = formatPrice(lastPrice, actualPriceRange);
+          const currentPriceStr = formatPrice(lastPrice, actualPriceRange, isCryptoAssetRef.current);
           
           // Medir largura do texto para ajustar o tamanho do retângulo dinamicamente
           const textMetrics = ctx.measureText(currentPriceStr);
@@ -4846,7 +4842,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const hoverPriceStr = formatPrice(hoverPrice, actualPriceRange);
+        const hoverPriceStr = formatPrice(hoverPrice, actualPriceRange, isCryptoAssetRef.current);
         const priceTextWidth = ctx.measureText(hoverPriceStr).width;
         const pricePadX = 8;
         const priceBoxW = priceTextWidth + pricePadX * 2;
