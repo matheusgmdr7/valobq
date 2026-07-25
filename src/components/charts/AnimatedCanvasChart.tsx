@@ -428,6 +428,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     // Estado de "Warm-up" - garante que temos dados suficientes antes de iniciar o motor
     const isDataReadyRef = useRef(false); // Só true quando há dados históricos suficientes
     const firstTickAfterHistoryRef = useRef(true); // Flag para sincronizar primeiro ticket após histórico
+    const liveWarmupUntilRef = useRef(0); // Limita passo de preço nos primeiros segundos após histórico (forex)
     const lastProcessedTickRef = useRef<number | null>(null); // Rastrear último tick processado (por timestamp)
     const isResyncingRef = useRef(false);
     const loadHistoricalDataRef = useRef<((options?: { background?: boolean }) => Promise<void>) | null>(null);
@@ -1125,11 +1126,26 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     const processIncomingTick = useCallback((tick: RealtimeTick) => {
       if (!historicalDataLoadedRef.current) return;
 
-      const tickPrice = tick.price;
+      let tickPrice = tick.price;
       const tickTime = tick.timestamp;
 
       if (lastProcessedTickRef.current === tickTime) return;
       lastProcessedTickRef.current = tickTime;
+
+      // Forex/OTC: suavizar transição histórico → live (evita salto agressivo no candle)
+      if (!isCryptoAssetRef.current && candlesRef.current.length > 0) {
+        const refPrice = liveCandleRef.current?.close
+          ?? candlesRef.current[candlesRef.current.length - 1]?.close
+          ?? candleEngineRef.current.realPrice;
+        if (refPrice > 0) {
+          const warmupActive = Date.now() < liveWarmupUntilRef.current;
+          const maxStep = refPrice * (warmupActive ? 0.000002 : 0.000004);
+          const diff = tickPrice - refPrice;
+          if (Math.abs(diff) > maxStep) {
+            tickPrice = refPrice + Math.sign(diff) * maxStep;
+          }
+        }
+      }
 
       if (candlesRef.current.length === 0) {
         const periodStart = getBarTime(tickTime, timeframe);
@@ -1160,9 +1176,12 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
       if (firstTickAfterHistoryRef.current) {
         firstTickAfterHistoryRef.current = false;
+        const refPrice = liveCandleRef.current?.close
+          ?? candlesRef.current[candlesRef.current.length - 1]?.close
+          ?? tickPrice;
         const engine = candleEngineRef.current;
         engine.realPrice = tickPrice;
-        engine.visualPrice = tickPrice;
+        engine.visualPrice = refPrice;
         engine.velocity = 0;
         engine.inertia = 0;
       }
@@ -1252,7 +1271,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       if (onPriceUpdate) onPriceUpdate(tickPrice);
     }, [timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle, syncChartLoadingState]);
 
-    const { isConnected, error, marketStatus } = useRealtimeStream({
+    const { isConnected, error, marketStatus, syncAnchor } = useRealtimeStream({
       symbol,
       wsUrl: process.env.NEXT_PUBLIC_MARKET_DATA_WS_URL || 'ws://localhost:8080',
       onTick: processIncomingTick,
@@ -1432,6 +1451,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         // Continuar mesmo com erro - o gráfico funcionará apenas com dados em tempo real
         candlesRef.current = [];
       } finally {
+        const last = candlesRef.current[candlesRef.current.length - 1];
+        if (last && !isCryptoAssetRef.current && last.close > 0) {
+          syncAnchor(symbol, last.close);
+          liveWarmupUntilRef.current = Date.now() + 5000;
+        }
         historicalDataLoadedRef.current = true;
         isLoadingRef.current = false;
         isResyncingRef.current = false;
@@ -5132,6 +5156,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       // Resetar estado de warm-up
       isDataReadyRef.current = false;
       firstTickAfterHistoryRef.current = true;
+      liveWarmupUntilRef.current = 0;
       
       // Resetar motor de física
       const engine = candleEngineRef.current;

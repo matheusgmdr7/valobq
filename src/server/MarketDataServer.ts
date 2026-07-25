@@ -91,6 +91,8 @@ const otcManager = new OTCEngineManager((otcTick: OTCTick) => {
 });
 
 const lastRealPrices = new Map<string, number>();
+/** Último sync-anchor enviado pelo cliente (histórico → live) */
+const clientAnchorSync = new Map<string, { price: number; at: number }>();
 
 /** Re-ancora preço OTC + agregador (TwelveData → OTC ou refinamento async) */
 function reanchorSymbol(symbol: string, price: number, isOTC = true): void {
@@ -128,8 +130,10 @@ function startSyntheticForex(symbol: string, anchorOverride?: number): void {
 
   resolveAnchorPrice(symbol).then(({ price: apiPrice, source }) => {
     if (apiPrice <= 0 || !otcManager.isActive(symbol)) return;
+    const recentClient = clientAnchorSync.get(symbol);
+    if (recentClient && Date.now() - recentClient.at < 120_000) return;
     const diff = Math.abs(apiPrice - anchor) / anchor;
-    if (diff <= 0.002) return;
+    if (diff <= 0.01) return;
     console.log(`[Synthetic] Re-anchor async ${symbol}: ${anchor.toFixed(5)} → ${apiPrice.toFixed(5)} (${source})`);
     reanchorSymbol(symbol, apiPrice, true);
   }).catch(() => {});
@@ -681,6 +685,27 @@ function startServer(): void {
             }
           }
           
+        } else if (data.type === 'sync-anchor') {
+          const symbol = data.symbol as string;
+          const price = parseFloat(data.price);
+          if (!symbol || !price || !isFinite(price) || price <= 0) return;
+
+          clientAnchorSync.set(symbol, { price, at: Date.now() });
+          lastRealPrices.set(symbol, price);
+
+          const pair = marketService.getPair(symbol);
+          const category = (pair?.category || 'forex') as MarketCategory;
+          const useOTC = shouldUseOTC(category);
+
+          if (useOTC) {
+            if (otcManager.isActive(symbol)) {
+              reanchorSymbol(symbol, price, true);
+            } else {
+              startSyntheticForex(symbol, price);
+            }
+          } else {
+            reanchorSymbol(symbol, price, false);
+          }
         } else if (data.type === 'unsubscribe') {
           const subscriptions = clientSubscriptions.get(ws);
           if (subscriptions) subscriptions.delete(data.symbol);

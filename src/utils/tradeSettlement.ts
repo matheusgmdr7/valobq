@@ -23,9 +23,47 @@ export interface TradeSettlementResult {
   balanceDeltaAtClose: number;
 }
 
-/** Offset mínimo para fechar a favor/contra a linha de entrada */
+/** Offset de fechamento IMA — levemente acima/abaixo da entrada (menos óbvio que colar na linha) */
 function imaOffset(entryPrice: number): number {
-  return Math.max(entryPrice * 0.00001, 0.00000001);
+  if (!entryPrice || !isFinite(entryPrice)) return 0.00000001;
+  const pct = entryPrice * 0.000025;
+  if (entryPrice >= 1000) return Math.max(pct, entryPrice * 0.000008);
+  if (entryPrice >= 10) return Math.max(pct, 0.03);
+  if (entryPrice >= 1) return Math.max(pct, 0.00012);
+  return Math.max(pct, entryPrice * 0.000035, 0.00000002);
+}
+
+function drawEpsilon(entryPrice: number): number {
+  return entryPrice * 0.000001;
+}
+
+/** Mercado já favorece a ordem (CALL acima / PUT abaixo da entrada). */
+export function isMarketFavorableToOrder(
+  entryPrice: number,
+  marketPrice: number,
+  type: 'call' | 'put',
+): boolean {
+  if (!entryPrice || !marketPrice) return false;
+  const eps = drawEpsilon(entryPrice);
+  if (type === 'call') return marketPrice > entryPrice + eps;
+  return marketPrice < entryPrice - eps;
+}
+
+/**
+ * IMA só atua quando o preço está contra o resultado desejado:
+ * - IMA WIN: manipula se a ordem ainda não está ganhando no mercado
+ * - IMA LOSS: manipula se a ordem está ganhando no mercado
+ */
+export function shouldApplyOutcomeControl(
+  entryPrice: number,
+  marketPrice: number,
+  type: 'call' | 'put',
+  control: OutcomeControl,
+): boolean {
+  if (control === 'off' || !entryPrice || !marketPrice) return false;
+  const favorable = isMarketFavorableToOrder(entryPrice, marketPrice, type);
+  if (control === 'ima_win') return !favorable;
+  return favorable;
 }
 
 /**
@@ -42,6 +80,10 @@ export function applyOutcomeControl(
     return marketExitPrice;
   }
 
+  if (!shouldApplyOutcomeControl(entryPrice, marketExitPrice, type, control)) {
+    return marketExitPrice;
+  }
+
   const eps = imaOffset(entryPrice);
 
   if (control === 'ima_win') {
@@ -52,7 +94,23 @@ export function applyOutcomeControl(
 }
 
 /** Janela antes da expiração em que o preço converge para o fechamento (IMA) */
-export const SETTLEMENT_SNAP_WINDOW_MS = 3000;
+export const SETTLEMENT_SNAP_WINDOW_MS = 2000;
+
+/** Após fechar a operação, quanto tempo o gráfico “solta” o preço IMA de volta ao mercado */
+export const SETTLEMENT_RELEASE_MS = 6500;
+
+/** 1 = ainda no preço IMA, 0 = totalmente no mercado (curva suave) */
+export function getSettlementReleasePull(
+  releaseStartMs: number,
+  nowMs: number = Date.now(),
+  releaseDurationMs: number = SETTLEMENT_RELEASE_MS,
+): number {
+  const elapsed = nowMs - releaseStartMs;
+  if (elapsed <= 0) return 1;
+  if (elapsed >= releaseDurationMs) return 0;
+  const t = elapsed / releaseDurationMs;
+  return 0.5 + 0.5 * Math.cos(Math.PI * t);
+}
 
 export interface SettlementSnapState {
   targetPrice: number;
@@ -88,6 +146,10 @@ export function getSettlementSnap(input: {
     return null;
   }
 
+  if (!shouldApplyOutcomeControl(entryPrice, marketPrice, type, outcomeControl)) {
+    return null;
+  }
+
   const targetPrice = applyOutcomeControl(entryPrice, marketPrice, type, outcomeControl);
 
   if (msUntilExpiration <= 0) {
@@ -98,8 +160,9 @@ export function getSettlementSnap(input: {
     return null;
   }
 
-  const linear = 1 - msUntilExpiration / snapWindowMs;
-  const blend = linear * linear * (3 - 2 * linear);
+  const t = 1 - msUntilExpiration / snapWindowMs;
+  /** Curva suave (seno): convergência distribuída nos ~2s, sem “puxão” só no último instante */
+  const blend = 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, t)));
 
   return { targetPrice, blend, tradeId };
 }

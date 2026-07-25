@@ -48,6 +48,8 @@ export interface UseRealtimeStreamReturn {
   disconnect: () => void;
   subscribe: (symbol: string) => void;
   unsubscribe: (symbol: string) => void;
+  /** Alinha o motor live ao último close do histórico (forex/OTC) */
+  syncAnchor: (symbol: string, price: number) => void;
 }
 
 /**
@@ -356,6 +358,22 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
     }
   }, []);
 
+  const syncAnchor = useCallback((targetSymbol: string, price: number) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!targetSymbol || !price || !isFinite(price) || price <= 0) return;
+
+    try {
+      wsRef.current.send(JSON.stringify({
+        type: 'sync-anchor',
+        symbol: targetSymbol,
+        price,
+      }));
+      logger.log(`🔗 [useRealtimeStream] sync-anchor ${targetSymbol} @ ${price}`);
+    } catch (err) {
+      logger.error('❌ [useRealtimeStream] Erro ao sync-anchor:', err);
+    }
+  }, []);
+
   // Conectar automaticamente se solicitado
   // TAREFA 1: CRÍTICO - Prevenir dupla execução do Strict Mode
   useEffect(() => {
@@ -498,6 +516,7 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
     disconnect,
     subscribe,
     unsubscribe,
+    syncAnchor,
   };
 }
 

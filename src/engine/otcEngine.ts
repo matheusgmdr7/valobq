@@ -32,21 +32,24 @@ export interface OTCConfig {
   momentumScale?: number;
   /** Desvio máximo do preço-âncora (ex.: 0.004 = 0,4% — forex) */
   maxDeviationPercent?: number;
+  /** Limite máximo de variação por tick (% do preço, ex.: 0.000006 ≈ 0,06 pip em EUR/USD) */
+  maxTickChangePercent?: number;
 }
 
 /** Configurações por categoria de ativo */
 const OTC_CONFIGS: Record<string, OTCConfig> = {
   forex: {
-    volatility: 0.000028,
-    meanReversionSpeed: 0.005,
-    tickIntervalMs: 60,
+    volatility: 0.0000045,
+    meanReversionSpeed: 0.014,
+    tickIntervalMs: 180,
     spreadPercent: 0.001,
-    maxTrendStrength: 0.00001,
-    trendDurationTicks: 140,
-    trendIdleProbability: 0.34,
-    momentumCarry: 0.14,
-    momentumScale: 0.2,
-    maxDeviationPercent: 0.0035,
+    maxTrendStrength: 0.0000008,
+    trendDurationTicks: 240,
+    trendIdleProbability: 0.65,
+    momentumCarry: 0.02,
+    momentumScale: 0.025,
+    maxDeviationPercent: 0.001,
+    maxTickChangePercent: 0.000002,
   },
   stocks: {
     volatility: 0.000055,
@@ -198,6 +201,7 @@ class OTCSymbolEngine {
       momentumCarry = 0.2,
       momentumScale = 0.3,
       maxDeviationPercent = 0.02,
+      maxTickChangePercent,
     } = this.config;
 
     const idleHalf = trendIdleProbability / 2;
@@ -235,6 +239,14 @@ class OTCSymbolEngine {
     const priceChange =
       trendComponent + meanReversionComponent + randomComponent + momentumComponent;
     this.currentPrice = this.currentPrice + priceChange;
+
+    if (maxTickChangePercent && maxTickChangePercent > 0) {
+      const maxDelta = this.currentPrice * maxTickChangePercent;
+      const delta = this.currentPrice - this.lastPrice;
+      if (Math.abs(delta) > maxDelta) {
+        this.currentPrice = this.lastPrice + Math.sign(delta) * maxDelta;
+      }
+    }
 
     // 7. Limitar desvio do preço-âncora (evita candles desproporcionais)
     const maxDeviation = this.basePrice * maxDeviationPercent;
@@ -370,6 +382,8 @@ class OTCSymbolEngine {
     this.meanPrice = newPrice;
     this.currentPrice = newPrice;
     this.lastPrice = newPrice;
+    this.momentum = 0;
+    this.trendTicksLeft = 0;
   }
 
   getCurrentPrice(): number {

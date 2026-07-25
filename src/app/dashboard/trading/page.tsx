@@ -419,6 +419,8 @@ const TradingPage: React.FC = () => {
         const newTrade: Trade = { ...result.trade, entryPrice: snapshotPrice };
         setLocalActiveTrades((prev) => [...prev, newTrade]);
         localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
+        lastKnownPricesRef.current.set(selectedAsset, snapshotPrice);
+        setRealTimePrices((prev) => ({ ...prev, [selectedAsset]: snapshotPrice }));
         if (user) animateBalance(activeBalance, activeBalance - tradeValue);
       } else {
         toast.error(result.message || 'Erro ao executar trade');
@@ -555,6 +557,25 @@ const TradingPage: React.FC = () => {
   const [activeTools, setActiveTools] = useState<GraphicTool[]>([]); // Ferramentas ativas/em uso
   const activeToolsRef = useRef<GraphicTool[]>([]); // Ref para manter activeTools atualizado nos handlers
   const chartRef = useRef<AnimatedCanvasChartRef>(null);
+
+  /** Preço ao vivo nos cards — cache por símbolo; não usar seed estático do marketService. */
+  const getAssetLivePrice = useCallback(
+    (symbol: string, entryPriceForNeutral?: number): number => {
+      if (symbol === selectedAsset) {
+        if (currentPrice > 0) return currentPrice;
+        const fromChart = chartRef.current?.getCurrentPrice() ?? 0;
+        if (fromChart > 0) return fromChart;
+      }
+      const cached =
+        realTimePrices[symbol] ?? lastKnownPricesRef.current.get(symbol);
+      if (cached && cached > 0) return cached;
+      if (entryPriceForNeutral !== undefined && entryPriceForNeutral > 0) {
+        return entryPriceForNeutral;
+      }
+      return 0;
+    },
+    [selectedAsset, currentPrice, realTimePrices],
+  );
   
   // Atualizar ref quando activeTools mudar
   useEffect(() => {
@@ -1909,10 +1930,10 @@ const TradingPage: React.FC = () => {
                           ? '0 4px 16px rgba(34, 197, 94, 0.2)'
                           : '0 4px 16px rgba(239, 68, 68, 0.2)',
                       } : assetActiveTrade ? (() => {
-                        // Calcular P&L em tempo real para determinar cor do gradiente
-                        const livePrice = asset.symbol === selectedAsset 
-                          ? (currentPrice || marketService.getPair(asset.symbol)?.currentPrice || 0) 
-                          : (marketService.getPair(asset.symbol)?.currentPrice || 0);
+                        const livePrice = getAssetLivePrice(
+                          asset.symbol,
+                          assetActiveTrade.entryPrice,
+                        );
                         const isWinning = assetActiveTrade.type === 'call' 
                           ? livePrice > assetActiveTrade.entryPrice 
                           : livePrice < assetActiveTrade.entryPrice;
@@ -2016,10 +2037,10 @@ const TradingPage: React.FC = () => {
                           </div>
                         </>
                       ) : assetActiveTrade ? (() => {
-                        // P&L em tempo real durante operação
-                        const livePrice = asset.symbol === selectedAsset 
-                          ? (currentPrice || marketService.getPair(asset.symbol)?.currentPrice || 0) 
-                          : (marketService.getPair(asset.symbol)?.currentPrice || 0);
+                        const livePrice = getAssetLivePrice(
+                          asset.symbol,
+                          assetActiveTrade.entryPrice,
+                        );
                         const payoutPct = 0.88;
                         const isWinning = assetActiveTrade.type === 'call' 
                           ? livePrice > assetActiveTrade.entryPrice 
@@ -3906,6 +3927,10 @@ const TradingPage: React.FC = () => {
                   onPriceUpdate={(price) => {
                     setCurrentPrice(price);
                     lastKnownPricesRef.current.set(selectedAsset, price);
+                    setRealTimePrices((prev) => {
+                      if (prev[selectedAsset] === price) return prev;
+                      return { ...prev, [selectedAsset]: price };
+                    });
                   }}
                   onExpirationTimeChange={(newExpirationTime) => {
                     // Atualizar expirationTime quando o timer zera automaticamente
