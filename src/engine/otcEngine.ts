@@ -352,7 +352,10 @@ class OTCSymbolEngine {
     const anchorPrice = this.currentPrice > 0 ? this.currentPrice : this.basePrice;
     const { volatility } = this.config;
     
-    let tempSeed = this.hashCode(`${this.symbol}:hist:${Math.floor(now / intervalMs)}`);
+    // Seed fixo por símbolo+intervalo+dia+âncora — forma estável na sessão, muda com dia/preço
+    const dayBucket = Math.floor(Date.now() / 86400000);
+    const anchorBucket = Math.round(anchorPrice * 10000);
+    let tempSeed = this.hashCode(`${this.symbol}:hist:${intervalMs}:${dayBucket}:${anchorBucket}`);
     
     const tempRandom = (): number => {
       tempSeed = (tempSeed * 1664525 + 1013904223) & 0xFFFFFFFF;

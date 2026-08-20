@@ -16,6 +16,21 @@ import { ChartLoadingScreen } from '@/components/ui/ChartLoadingScreen';
 import type { OutcomeControl } from '@/utils/tradeSettlement';
 import { pickNearestSettlementSnap, getSettlementReleasePull } from '@/utils/tradeSettlement';
 import { Minus, Plus } from 'lucide-react';
+import {
+  chartCacheKey,
+  getChartCache,
+  setChartCache,
+  deleteChartCache,
+  isCryptoSymbol,
+  isChartCacheValid,
+  isChartCacheStale,
+  getBarPeriodStart,
+  getTimeframePeriodMs,
+  isTickPricePlausible,
+  normalizeChartSymbol,
+  CHART_CACHE_VERSION,
+  filterOutlierCandles,
+} from '@/lib/chartSymbolCache';
 
 export type Timeframe = '1m' | '2m' | '5m' | '10m' | '15m' | '30m' | '1h' | '2h' | '4h' | '8h' | '12h' | '1d' | '1w' | '1M';
 
@@ -24,6 +39,7 @@ export interface GraphicToolData {
   type: 'line' | 'trendline' | 'horizontal' | 'vertical' | 'fibonacci';
   color: string;
   style: 'solid' | 'dashed' | 'dotted';
+  lineWidth?: number;
   visible: boolean;
   points: Array<{ x: number; y: number; price?: number; time?: number }>;
 }
@@ -315,6 +331,15 @@ export function chartTimeFromScreenX(x: number, axis: ChartTimeAxis): number | n
   return axis.firstTime + relativeX * (axis.lastTime - axis.firstTime);
 }
 
+const ENDPOINT_HANDLE_RADIUS = 10;
+const ENDPOINT_HANDLE_RADIUS_COARSE = 22;
+const LINE_BODY_HIT_RADIUS = 25;
+const LINE_BODY_HIT_RADIUS_COARSE = 40;
+
+export function defaultGraphicToolLineWidth(type: GraphicToolData['type']): number {
+  return type === 'trendline' ? 1.5 : 1.0;
+}
+
 export function screenYFromPrice(
   price: number,
   chartY: number,
@@ -359,8 +384,23 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     }, [onCloseSnapshot]);
 
     useEffect(() => {
-      isCoarsePointerRef.current = window.matchMedia('(pointer: coarse)').matches;
+      const mq = window.matchMedia('(pointer: coarse)');
+      const update = () => {
+        isCoarsePointerRef.current = mq.matches;
+      };
+      update();
+      mq.addEventListener('change', update);
+      return () => mq.removeEventListener('change', update);
     }, []);
+
+    const getEndpointHitRadius = () =>
+      isCoarsePointerRef.current ? ENDPOINT_HANDLE_RADIUS_COARSE : ENDPOINT_HANDLE_RADIUS + 4;
+    const getEndpointDrawRadius = () =>
+      isCoarsePointerRef.current ? 9 : 6;
+    const getLineBodyHitRadius = () =>
+      isCoarsePointerRef.current ? LINE_BODY_HIT_RADIUS_COARSE : LINE_BODY_HIT_RADIUS;
+    const getDragStartThreshold = () =>
+      isCoarsePointerRef.current ? 6 : 3;
 
     const tryCloseSnapshotAtClient = useCallback((clientX: number, clientY: number): boolean => {
       const canvas = canvasRef.current;
@@ -422,6 +462,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     const lastCandleTimeRef = useRef<number | null>(null); // Apenas para rastrear o período do último candle
     const historicalDataLoadedRef = useRef(false);
     const isLoadingRef = useRef(false); // Flag para controlar estado de carregamento
+    const activeSymbolTimeframeRef = useRef<{ symbol: string; timeframe: Timeframe } | null>(null);
+    const skipSyncAnchorRef = useRef(false);
     const watermarkImageRef = useRef<HTMLImageElement | null>(null);
     
     // Live Candle - Candle em tempo real que é atualizado a cada tick
@@ -460,6 +502,37 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       const layout = chartLayoutRef.current;
       if (layout.firstTime <= 0 || layout.lastTime <= layout.firstTime) return null;
       return screenXFromChartTime(time, layout);
+    };
+
+    const resolveLineEndpointsScreen = (
+      tool: GraphicToolData,
+      chartY: number,
+      chartHeight: number,
+      actualMinPrice: number,
+      actualMaxPrice: number,
+    ): { x1: number; y1: number; x2: number; y2: number } | null => {
+      if (tool.points.length < 2) return null;
+      const p1 = tool.points[0];
+      const p2 = tool.points[1];
+      let x1 = p1.x ?? 0;
+      let y1 = p1.y ?? 0;
+      let x2 = p2.x ?? 0;
+      let y2 = p2.y ?? 0;
+      if (p1.time !== undefined) {
+        const tx1 = getChartXFromTime(p1.time);
+        if (tx1 !== null) x1 = tx1;
+      }
+      if (p2.time !== undefined) {
+        const tx2 = getChartXFromTime(p2.time);
+        if (tx2 !== null) x2 = tx2;
+      }
+      if (p1.price !== undefined) {
+        y1 = screenYFromPrice(p1.price, chartY, chartHeight, actualMinPrice, actualMaxPrice);
+      }
+      if (p2.price !== undefined) {
+        y2 = screenYFromPrice(p2.price, chartY, chartHeight, actualMinPrice, actualMaxPrice);
+      }
+      return { x1, y1, x2, y2 };
     };
     
     // Motor de Física de Partículas - Candle Engine
@@ -555,6 +628,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       isDragging: boolean;
       toolId: string | null;
       toolType: string | null;
+      dragMode: 'move' | 'endpoint';
+      endpointIndex: number | null;
       startMouseX: number;
       startMouseY: number;
       startPrice: number | null;
@@ -568,6 +643,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       isDragging: false,
       toolId: null,
       toolType: null,
+      dragMode: 'move',
+      endpointIndex: null,
       startMouseX: 0,
       startMouseY: 0,
       startPrice: null,
@@ -878,16 +955,26 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
 
       const isNonCrypto = !isCryptoAssetRef.current;
-      engine.idleWanderOffset = 0;
 
       // Forex/índices/commodities/ações: suaviza entre ticks reais (sem jitter artificial)
       const imaActive = (snap && snap.blend > 0.15) || releasePull > 0.02;
       if (isNonCrypto && !imaActive) {
-        // Mesmo modelo da crypto: atração rápida ao preço do tick (sem jitter)
+        // Micro-movimento entre ticks para o candle parecer "vivo"
+        if (timeSinceLastTick > 400 && engine.realPrice > 0) {
+          engine.idleWanderOffset += (Math.random() - 0.5) * engine.realPrice * 0.0000004 * dt;
+          engine.idleWanderOffset = Math.max(
+            -engine.realPrice * 0.0000015,
+            Math.min(engine.realPrice * 0.0000015, engine.idleWanderOffset),
+          );
+        } else {
+          engine.idleWanderOffset *= 0.88;
+        }
+
+        const target = engine.realPrice + engine.idleWanderOffset;
         const smoothingFactor = engine.acceleration * 0.85;
-        engine.visualPrice += (engine.realPrice - engine.visualPrice) * (smoothingFactor * dt);
-        if (Math.abs(engine.realPrice - engine.visualPrice) < engine.realPrice * 1e-9) {
-          engine.visualPrice = engine.realPrice;
+        engine.visualPrice += (target - engine.visualPrice) * (smoothingFactor * dt);
+        if (Math.abs(target - engine.visualPrice) < engine.realPrice * 1e-9) {
+          engine.visualPrice = target;
         }
         engine.velocity = 0;
         engine.inertia = 0;
@@ -1094,46 +1181,87 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       engine.lastTickTime = tickTime;
     }, [clearLiveCandleCache]);
 
+    /** Preenche candles minuto a minuto até o período alvo (evita gaps laterais no forex/OTC). */
+    const fillCandlesUpToPeriod = useCallback((
+      targetPeriodStart: number,
+      price: number,
+      tickTime: number,
+    ): boolean => {
+      if (!historicalDataLoadedRef.current || candlesRef.current.length === 0) return true;
+
+      const periodMs = getTimeframeMs(timeframe);
+      const maxFill = 180;
+
+      const lastCandle = candlesRef.current[candlesRef.current.length - 1];
+      const startPeriod = liveCandleRef.current
+        ? getBarTime(liveCandleRef.current.time, timeframe)
+        : getBarTime(lastCandle.time, timeframe);
+      const gapPeriods = (targetPeriodStart - startPeriod) / periodMs;
+      if (gapPeriods > maxFill) {
+        return false;
+      }
+
+      for (let n = 0; n < maxFill; n++) {
+        const last = candlesRef.current[candlesRef.current.length - 1];
+        const livePeriod = liveCandleRef.current
+          ? getBarTime(liveCandleRef.current.time, timeframe)
+          : getBarTime(last.time, timeframe);
+
+        if (livePeriod >= targetPeriodStart) break;
+
+        if (liveCandleRef.current) {
+          liveCandleRef.current.close = price;
+          liveCandleRef.current.high = Math.max(liveCandleRef.current.high, price);
+          liveCandleRef.current.low = Math.min(liveCandleRef.current.low, price);
+          freezeLiveCandle();
+        }
+
+        createLiveCandle(livePeriod + periodMs, price, tickTime);
+      }
+      return true;
+    }, [timeframe, freezeLiveCandle, createLiveCandle]);
+
     /** Virada de período sincronizada com currentTime (mesma base do timer lateral MM:SS) */
     const rolloverLiveCandleByClock = useCallback((nowMs: number) => {
       if (document.hidden || isResyncingRef.current) return;
       if (!historicalDataLoadedRef.current || candlesRef.current.length === 0) return;
 
       const chartPeriod = getBarTime(nowMs, timeframe);
+      const engine = candleEngineRef.current;
       const lastCandle = candlesRef.current[candlesRef.current.length - 1];
       const effectiveLive = liveCandleRef.current ?? lastCandle;
-      const livePeriod = getBarTime(effectiveLive.time, timeframe);
-
-      if (chartPeriod <= livePeriod) return;
-
-      const engine = candleEngineRef.current;
       const price = engine.visualPrice > 0
         ? engine.visualPrice
         : engine.realPrice > 0
           ? engine.realPrice
           : effectiveLive.close;
 
-      if (liveCandleRef.current) {
-        liveCandleRef.current.close = price;
-        liveCandleRef.current.high = Math.max(liveCandleRef.current.high, price);
-        liveCandleRef.current.low = Math.min(liveCandleRef.current.low, price);
-        freezeLiveCandle();
-      }
-
-      if (!liveCandleRef.current) {
-        createLiveCandle(chartPeriod, price, nowMs);
-      }
-
+      fillCandlesUpToPeriod(chartPeriod, price, nowMs);
       lastCandleTimeRef.current = chartPeriod;
-    }, [timeframe, freezeLiveCandle, createLiveCandle]);
+    }, [timeframe, fillCandlesUpToPeriod]);
 
     const processIncomingTick = useCallback((tick: RealtimeTick) => {
       if (!historicalDataLoadedRef.current) return;
+      if (
+        tick.symbol &&
+        normalizeChartSymbol(tick.symbol) !== normalizeChartSymbol(symbolRef.current)
+      ) {
+        return;
+      }
 
       let tickPrice = tick.price;
       const tickTime = tick.timestamp;
 
       if (lastProcessedTickRef.current === tickTime) return;
+
+      const refForSanity =
+        liveCandleRef.current?.close ??
+        candlesRef.current[candlesRef.current.length - 1]?.close ??
+        candleEngineRef.current.realPrice;
+      if (!isTickPricePlausible(symbolRef.current, tickPrice, refForSanity)) {
+        return;
+      }
+
       lastProcessedTickRef.current = tickTime;
 
       // Forex/OTC: suavizar transição histórico → live (evita salto agressivo no candle)
@@ -1143,7 +1271,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           ?? candleEngineRef.current.realPrice;
         if (refPrice > 0) {
           const warmupActive = Date.now() < liveWarmupUntilRef.current;
-          const maxStep = refPrice * (warmupActive ? 0.000002 : 0.000004);
+          const maxStep = refPrice * (warmupActive ? 0.00002 : 0.000004);
           const diff = tickPrice - refPrice;
           if (Math.abs(diff) > maxStep) {
             tickPrice = refPrice + Math.sign(diff) * maxStep;
@@ -1170,12 +1298,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
 
       const ms = marketStatusRef.current;
-      if (tick.isOTC || (ms?.category && ms.category !== 'crypto')) {
+      if (isCryptoSymbol(symbolRef.current) || ms?.category === 'crypto') {
+        isCryptoAssetRef.current = true;
+      } else if (tick.isOTC || (ms?.category && ms.category !== 'crypto')) {
         isCryptoAssetRef.current = false;
-      } else if (ms?.category === 'crypto') {
-        isCryptoAssetRef.current = true;
-      } else if (tick.isClosed !== undefined) {
-        isCryptoAssetRef.current = true;
       }
 
       if (firstTickAfterHistoryRef.current) {
@@ -1209,12 +1335,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             : 0;
 
         if (tickChartPeriod > livePeriod) {
-          if (liveCandleRef.current) {
-            freezeLiveCandle();
-          }
-          if (!liveCandleRef.current) {
-            createLiveCandle(tickChartPeriod, tickPrice, tickTime);
-          }
+          fillCandlesUpToPeriod(tickChartPeriod, tickPrice, tickTime);
         }
       } else {
         if (!liveCandleRef.current) {
@@ -1233,19 +1354,15 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             engine.inertia = 0;
             engine.lastTickTime = tickTime;
           } else {
-            createLiveCandle(periodStart, tickPrice, tickTime);
+            fillCandlesUpToPeriod(periodStart, tickPrice, tickTime);
           }
         } else {
           const currentLivePeriod = getBarTime(liveCandleRef.current.time, timeframe);
           if (periodStart > currentLivePeriod) {
-            liveCandleRef.current.close = tickPrice;
-            liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
-            liveCandleRef.current.low = Math.min(liveCandleRef.current.low, tickPrice);
             const engine = candleEngineRef.current;
             engine.realPrice = tickPrice;
             engine.lastTickTime = tickTime;
-            freezeLiveCandle();
-            createLiveCandle(periodStart, tickPrice, tickTime);
+            fillCandlesUpToPeriod(periodStart, tickPrice, tickTime);
           } else {
             liveCandleRef.current.close = tickPrice;
             liveCandleRef.current.high = Math.max(liveCandleRef.current.high, tickPrice);
@@ -1273,7 +1390,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
 
       if (onPriceUpdate) onPriceUpdate(tickPrice);
-    }, [timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle, syncChartLoadingState]);
+    }, [timeframe, onPriceUpdate, freezeLiveCandle, createLiveCandle, fillCandlesUpToPeriod, syncChartLoadingState]);
 
     const { isConnected, error, marketStatus, syncAnchor } = useRealtimeStream({
       symbol,
@@ -1282,16 +1399,18 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     });
 
     useEffect(() => {
+      if (!marketStatus || marketStatus.symbol !== symbol) return;
+
       marketStatusRef.current = marketStatus;
       if (onMarketStatusChange) {
         onMarketStatusChange(marketStatus);
       }
-      if (marketStatus?.category === 'crypto') {
+      if (marketStatus.category === 'crypto') {
         isCryptoAssetRef.current = true;
-      } else if (marketStatus?.category) {
+      } else if (marketStatus.category) {
         isCryptoAssetRef.current = false;
       }
-    }, [marketStatus, onMarketStatusChange]);
+    }, [marketStatus, symbol, onMarketStatusChange]);
 
     // Virada de candle pelo relógio — sincronizada com o timer lateral (MM:SS) e currentTime do gráfico
     useEffect(() => {
@@ -1305,6 +1424,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
      */
     const loadHistoricalData = async (options?: { background?: boolean }): Promise<void> => {
       const background = options?.background ?? false;
+      const requestedSymbol = symbol;
+      const requestedTimeframe = timeframe;
+      const isStaleLoad = () =>
+        activeSymbolTimeframeRef.current?.symbol !== requestedSymbol ||
+        activeSymbolTimeframeRef.current?.timeframe !== requestedTimeframe;
 
       if (!background) {
         isLoadingRef.current = true;
@@ -1316,9 +1440,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       }
       
       // Detectar crypto por símbolo (refinado quando ticks trazem isClosed)
-      const cryptoBases = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'DOT', 'MATIC', 'LINK', 'LTC', 'AVAX', 'UNI', 'ATOM', 'SHIB', 'TRX'];
-      const base = symbol.split('/')[0]?.toUpperCase() || '';
-      isCryptoAssetRef.current = cryptoBases.includes(base);
+      isCryptoAssetRef.current = isCryptoSymbol(symbol);
       
       
       try {
@@ -1327,6 +1449,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         const url = `/api/market/historical?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`;
         const response = await fetch(url);
         
+        if (isStaleLoad()) return;
+
         if (!response.ok) {
           const errorText = await response.text();
           logger.warn(`⚠️ [AnimatedCanvasChart] Erro ao buscar dados históricos (${response.status}): ${errorText}`);
@@ -1335,9 +1459,6 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         } else {
           const data = await response.json();
           if (data.candles && data.candles.length > 0) {
-            if (background) {
-              liveCandleRef.current = null;
-            }
             // Converter candles recebidos da API
             const rawCandles = data.candles.map((candle: any) => ({
               time: candle.time * 1000, // Converter de segundos para ms
@@ -1351,6 +1472,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             // Isso é necessário porque a API pode retornar candles em intervalos diferentes
             // (ex: sempre retorna 1m, mas precisamos agrupar em 5m, 15m, etc.)
             candlesRef.current = groupCandlesByTimeframe(rawCandles, timeframe);
+            candlesRef.current = filterOutlierCandles(requestedSymbol, candlesRef.current);
 
             // OTC: alinhar último candle ao preço-âncora da API (continuidade histórico → live)
             const anchorPrice = typeof data.anchorPrice === 'number' && data.anchorPrice > 0
@@ -1397,7 +1519,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
               // Motor de física e rollover ativos com qualquer histórico válido (≥2 candles)
               isDataReadyRef.current = candlesRef.current.length >= 2;
-              firstTickAfterHistoryRef.current = true; // Próximo ticket será o primeiro após histórico
+              if (!background) {
+                firstTickAfterHistoryRef.current = true; // Próximo tick será o primeiro após histórico
+              }
               
               if (!hasEnoughData) {
                 logger.warn(`⚠️ [AnimatedCanvasChart] Apenas ${candlesRef.current.length} candles carregados, necessário ${minCandlesRequired}. Motor aguardando mais dados...`);
@@ -1425,26 +1549,6 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               }
             }
             
-            // Calcular valores históricos dos indicadores
-            if (candlesRef.current.length > 0) {
-              const indicatorCandles: IndicatorCandleData[] = candlesRef.current.map(c => ({
-                time: c.time,
-                open: c.open,
-                high: c.high,
-                low: c.low,
-                close: c.close,
-                volume: (c as any).volume
-              }));
-              
-              // Calcular indicadores para cada candle histórico
-              for (let i = 0; i < candlesRef.current.length; i++) {
-                const candle = candlesRef.current[i];
-                indicatorEngineRef.current.onTick(
-                  indicatorCandles.slice(0, i + 1),
-                  candle.close
-                );
-              }
-            }
           } else {
             logger.warn(`⚠️ [AnimatedCanvasChart] Nenhum candle histórico retornado para ${symbol}, continuando apenas com dados em tempo real`);
             candlesRef.current = [];
@@ -1455,19 +1559,104 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         // Continuar mesmo com erro - o gráfico funcionará apenas com dados em tempo real
         candlesRef.current = [];
       } finally {
+        if (isStaleLoad()) return;
+
         const last = candlesRef.current[candlesRef.current.length - 1];
-        if (last && !isCryptoAssetRef.current && last.close > 0) {
+        if (last && !isCryptoAssetRef.current && last.close > 0 && !background) {
           syncAnchor(symbol, last.close);
-          liveWarmupUntilRef.current = Date.now() + 5000;
+          liveWarmupUntilRef.current = Date.now() + 2000;
         }
         historicalDataLoadedRef.current = true;
         isLoadingRef.current = false;
         isResyncingRef.current = false;
         syncChartLoadingState();
+
+        if (candlesRef.current.length > 0) {
+          const syncNow = currentTimeRef.current instanceof Date
+            ? currentTimeRef.current.getTime()
+            : Date.now();
+          const lastCandle = candlesRef.current[candlesRef.current.length - 1];
+          const engine = candleEngineRef.current;
+          const fillPrice = engine.realPrice > 0 ? engine.realPrice : lastCandle.close;
+          const targetPeriod = getBarPeriodStart(syncNow, requestedTimeframe);
+          const fillOk = fillCandlesUpToPeriod(targetPeriod, fillPrice, syncNow);
+
+          viewportRef.current.isAtEnd = true;
+          const count = viewportRef.current.visibleCandleCount;
+          viewportRef.current.visibleStartIndex = Math.max(0, candlesRef.current.length - count);
+
+          if (!fillOk && !background) {
+            logger.warn(`⚠️ [AnimatedCanvasChart] Gap grande após histórico ${symbol}, série pode precisar de resync`);
+          }
+        }
+
+        // Indicadores em background — não bloqueia a exibição do gráfico
+        const candlesForIndicators = candlesRef.current;
+        if (candlesForIndicators.length > 0) {
+          requestAnimationFrame(() => {
+            const indicatorCandles: IndicatorCandleData[] = candlesForIndicators.map(c => ({
+              time: c.time,
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+              volume: (c as any).volume,
+            }));
+            for (let i = 0; i < candlesForIndicators.length; i++) {
+              indicatorEngineRef.current.onTick(
+                indicatorCandles.slice(0, i + 1),
+                candlesForIndicators[i].close
+              );
+            }
+          });
+        }
       }
     };
 
     loadHistoricalDataRef.current = loadHistoricalData;
+
+    /** Forex/OTC: resync histórico ao voltar à aba após longo período em background. */
+    useEffect(() => {
+      let hiddenSince: number | null = null;
+
+      const handleVisibility = () => {
+        if (document.hidden) {
+          hiddenSince = Date.now();
+          return;
+        }
+        if (isCryptoSymbol(symbol)) return;
+        if (!historicalDataLoadedRef.current) return;
+        if (hiddenSince === null) return;
+
+        const hiddenMs = Date.now() - hiddenSince;
+        hiddenSince = null;
+        if (hiddenMs < 30_000) return;
+
+        const key = chartCacheKey(symbol, timeframe);
+        const cached = getChartCache(key);
+        if (cached && isChartCacheStale(cached, timeframe)) {
+          deleteChartCache(key);
+        }
+
+        loadHistoricalDataRef.current?.({ background: true });
+      };
+
+      document.addEventListener('visibilitychange', handleVisibility);
+      return () => document.removeEventListener('visibilitychange', handleVisibility);
+    }, [symbol, timeframe]);
+
+    // sync-anchor quando o WS conectar após histórico novo (não após restaurar cache)
+    useEffect(() => {
+      if (!isConnected || isCryptoAssetRef.current) return;
+      if (skipSyncAnchorRef.current) {
+        skipSyncAnchorRef.current = false;
+        return;
+      }
+      const last = candlesRef.current[candlesRef.current.length - 1];
+      if (last?.close > 0) {
+        syncAnchor(symbol, last.close);
+      }
+    }, [isConnected, symbol, syncAnchor]);
 
     /**
      * Interpola suavemente entre dois valores com easing ease-out para movimento "vivo" e natural
@@ -3129,20 +3318,36 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           const currentVisualPrice = engine.visualPrice > 0 ? engine.visualPrice : actualMaxPrice;
           
           // Filtrar trades apenas do símbolo atual
-          const tradesForCurrentSymbol = currentActiveTrades.filter(t => !t.symbol || t.symbol === symbol);
-          
-          tradesForCurrentSymbol.forEach(trade => {
-          // Verificar se o trade está no período visível ou se já expirou (para mostrar resultado)
           const validCurrentTime = currentTimeRef.current instanceof Date ? currentTimeRef.current : new Date();
-          const currentTime = validCurrentTime.getTime();
-          const isTradeActive = trade.expiration > currentTime;
-          const isTradeExpired = !isTradeActive && trade.result; // Trade expirado com resultado
-          
-          // Se o trade expirou mas ainda não tem resultado, não mostrar (está sendo processado)
-          if (!isTradeActive && !isTradeExpired) {
-            return;
+          const currentTimeMs = validCurrentTime.getTime();
+
+          const tradesForCurrentSymbol = currentActiveTrades.filter(t => !t.symbol || t.symbol === symbol);
+
+          const isDrawableTrade = (t: (typeof tradesForCurrentSymbol)[0]) => {
+            const isTradeActive = t.expiration > currentTimeMs;
+            const isTradeExpired = !isTradeActive && !!t.result;
+            return isTradeActive || isTradeExpired;
+          };
+
+          const drawableTrades = tradesForCurrentSymbol
+            .filter(isDrawableTrade)
+            .sort((a, b) => a.id.localeCompare(b.id));
+
+          // Mesma expiração = mesma posição no gráfico (entryPrice varia levemente entre cliques)
+          const stackMeta = new Map<string, { index: number; total: number }>();
+          const byExpiration = new Map<number, string[]>();
+          for (const t of drawableTrades) {
+            const ids = byExpiration.get(t.expiration) || [];
+            ids.push(t.id);
+            byExpiration.set(t.expiration, ids);
           }
-          
+          for (const ids of byExpiration.values()) {
+            ids.forEach((id, index) => {
+              stackMeta.set(id, { index, total: ids.length });
+            });
+          }
+
+          drawableTrades.forEach(trade => {
           // Calcular posições Y do entryPrice e visualPrice
           const entryY = chartY + chartHeight - ((trade.entryPrice - actualMinPrice) / actualPriceRange) * chartHeight;
           const currentY = chartY + chartHeight - ((currentVisualPrice - actualMinPrice) / actualPriceRange) * chartHeight;
@@ -3251,21 +3456,24 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             balloonText = `R$ ${trade.amount.toFixed(0)}`;
           }
           
-          // Medir texto
-          ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          const isOpeningBalloon = !trade.result;
+
+          // Medir texto (tamanho distinto: abertura vs resultado)
+          ctx.font = isOpeningBalloon
+            ? 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+            : 'bold 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
           const textWidth = ctx.measureText(balloonText).width;
           const titleWidth = balloonTitle ? ctx.measureText(balloonTitle).width : 0;
           const maxWidth = Math.max(textWidth, titleWidth);
           
-          // Dimensões do balão (aumentadas)
-          const balloonPadding = 12;
-          const pointerSize = 9;
-          const pointerOffset = 14;
+          const balloonPadding = isOpeningBalloon ? 8 : 12;
+          const pointerSize = isOpeningBalloon ? 6 : 9;
+          const pointerOffset = isOpeningBalloon ? 11 : 14;
           const closeBtnSize = showCloseButton ? 16 : 0;
           const closeBtnMargin = showCloseButton ? 8 : 0;
           const balloonWidth = maxWidth + balloonPadding * 2 + closeBtnSize + closeBtnMargin;
-          const balloonHeight = balloonTitle ? 44 : 30;
-          const borderRadius = 6;
+          const balloonHeight = balloonTitle ? 44 : (isOpeningBalloon ? 22 : 30);
+          const borderRadius = isOpeningBalloon ? 11 : 6;
           
           // Posicionar balão - ponteiro no lado esquerdo, balão à direita do círculo
           const balloonX = lastCandleX - pointerOffset;
@@ -3275,7 +3483,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           // IMPORTANTE: Usar canvasWidth (não chartWidth) como limite direito
           // Porque availableWidth > chartWidth (~1.01x), os candles podem estar além da borda do chartWidth.
           // Permitir que o balão sobreponha a área da escala de preço para não ser empurrado.
-          const constrainedX = Math.max(chartX + 5, Math.min(balloonX, canvasWidth - balloonWidth - 5));
+          let constrainedX = Math.max(chartX + 5, Math.min(balloonX, canvasWidth - balloonWidth - 5));
           const defaultConstrainedY = Math.max(chartY + 10, defaultBalloonY);
           
           // Verificar colisão com a caixa de info/estatísticas (canto superior direito)
@@ -3310,6 +3518,17 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             // Posicionar abaixo do preço
             const belowY = lastPriceY + pointerSize + 5;
             constrainedY = Math.min(chartY + chartHeight - balloonHeight - 10, Math.max(chartY + 10, belowY));
+          }
+
+          // Empilhar balões quando várias ops compartilham a mesma expiração (mesma posição visual)
+          const stack = stackMeta.get(trade.id) || { index: 0, total: 1 };
+          if (stack.total > 1) {
+            const stackStepX = 10;
+            const centered = stack.index - (stack.total - 1) / 2;
+            constrainedX = Math.max(
+              chartX + 5,
+              Math.min(canvasWidth - balloonWidth - 5, constrainedX + centered * stackStepX)
+            );
           }
           
           // Posição do ponteiro (muda conforme direção)
@@ -3456,8 +3675,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             ctx.textBaseline = 'bottom';
             ctx.fillText(balloonText, textCenterX, constrainedY + balloonHeight - 7);
           } else {
-            // Sem título (ativo): apenas valor centralizado
-            ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            // Sem título (ativo): valor centralizado — balão compacto
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
             ctx.textBaseline = 'middle';
             ctx.fillText(balloonText, constrainedX + balloonWidth / 2, constrainedY + balloonHeight / 2);
           }
@@ -4179,12 +4398,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           
           const isSelected = selectedToolIdRef.current === tool.id;
           ctx.strokeStyle = tool.color;
-          // Linha mais grossa quando selecionada para facilitar visualização
-          ctx.lineWidth = isSelected ? 2.0 : (tool.type === 'trendline' ? 1.5 : 1.0);
+          const baseLineWidth = tool.lineWidth ?? defaultGraphicToolLineWidth(tool.type);
+          ctx.lineWidth = isSelected ? baseLineWidth + 0.5 : baseLineWidth;
           
           // Aplicar estilo da linha
-          if (tool.style === 'dashed' || tool.type === 'trendline') {
-            // Trendline sempre tracejada, ou usar estilo definido
+          if (tool.style === 'dashed') {
             ctx.setLineDash([6, 4]);
           } else if (tool.style === 'dotted') {
             ctx.setLineDash([2, 3]);
@@ -4476,23 +4694,22 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               ctx.stroke();
             }
             
-            // Desenhar círculo no centro se a ferramenta estiver selecionada
+            // Desenhar handles nas pontas quando selecionada
             if (selectedToolIdRef.current && selectedToolIdRef.current === tool.id && calculatedPoints.length >= 2 && calculatedPoints[0].valid && calculatedPoints[1].valid) {
               const p1 = calculatedPoints[0];
               const p2 = calculatedPoints[1];
-              const centerX = (p1.x + p2.x) / 2;
-              const centerY = (p1.y + p2.y) / 2;
-              
-              // Verificar se o centro está dentro do viewport
-              if (centerX >= chartX && centerX <= chartX + chartWidth && centerY >= chartY && centerY <= chartY + chartHeight) {
+
+              [p1, p2].forEach((pt) => {
+                const handleR = getEndpointDrawRadius();
                 ctx.fillStyle = '#3b82f6';
                 ctx.beginPath();
-                ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
+                ctx.arc(pt.x, pt.y, handleR, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 1.5;
+                ctx.lineWidth = isCoarsePointerRef.current ? 2 : 1.5;
+                ctx.setLineDash([]);
                 ctx.stroke();
-              }
+              });
             }
           }
           
@@ -5150,6 +5367,131 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     useEffect(() => {
       if (!canvasRef.current) return;
 
+      const prev = activeSymbolTimeframeRef.current;
+      const cacheKey = chartCacheKey(symbol, timeframe);
+
+      // Salvar snapshot do ativo anterior ao trocar (somente OTC/forex — crypto sempre recarrega)
+      if (
+        prev &&
+        (prev.symbol !== symbol || prev.timeframe !== timeframe) &&
+        candlesRef.current.length > 0 &&
+        historicalDataLoadedRef.current &&
+        !isCryptoSymbol(prev.symbol)
+      ) {
+        const prevEngine = candleEngineRef.current;
+        const snapshot = {
+          version: CHART_CACHE_VERSION,
+          savedAt: Date.now(),
+          candles: candlesRef.current.map((c) => ({ ...c })),
+          liveCandle: liveCandleRef.current ? { ...liveCandleRef.current } : null,
+          lastCandleTime: lastCandleTimeRef.current,
+          engine: {
+            realPrice: prevEngine.realPrice,
+            visualPrice: prevEngine.visualPrice,
+            velocity: prevEngine.velocity,
+            inertia: prevEngine.inertia,
+          },
+          viewport: {
+            visibleStartIndex: viewportRef.current.visibleStartIndex,
+            visibleCandleCount: viewportRef.current.visibleCandleCount,
+            isAtEnd: viewportRef.current.isAtEnd,
+          },
+          displayedPrice: displayedPriceRef.current,
+          isCrypto: isCryptoSymbol(prev.symbol),
+        };
+        if (isChartCacheValid(prev.symbol, snapshot)) {
+          setChartCache(chartCacheKey(prev.symbol, prev.timeframe), snapshot);
+        }
+      }
+
+      activeSymbolTimeframeRef.current = { symbol, timeframe };
+      isCryptoAssetRef.current = isCryptoSymbol(symbol);
+      interpolatedCandlesRef.current.clear();
+      lastRenderedLiveCandleTimeRef.current = null;
+
+      const cached = getChartCache(cacheKey);
+      if (cached && cached.candles.length > 0 && !isCryptoSymbol(symbol)) {
+        const cacheValid = isChartCacheValid(symbol, cached);
+        const cacheFresh = !isChartCacheStale(cached, timeframe);
+        if (!cacheValid || !cacheFresh) {
+          deleteChartCache(cacheKey);
+        } else {
+          candlesRef.current = cached.candles.map((c) => ({ ...c }));
+          liveCandleRef.current = cached.liveCandle ? { ...cached.liveCandle } : null;
+          lastCandleTimeRef.current = cached.lastCandleTime;
+          isCryptoAssetRef.current = isCryptoSymbol(symbol);
+
+          const engine = candleEngineRef.current;
+          engine.realPrice = cached.engine.realPrice;
+          engine.visualPrice = cached.engine.visualPrice;
+          engine.velocity = cached.engine.velocity;
+          engine.inertia = cached.engine.inertia;
+          engine.lastTickTime = Date.now();
+          engine.lastFrameTime = performance.now();
+
+          viewportRef.current.visibleStartIndex = cached.viewport.visibleStartIndex;
+          viewportRef.current.visibleCandleCount = cached.viewport.visibleCandleCount;
+          viewportRef.current.isAtEnd = cached.viewport.isAtEnd;
+
+          displayedPriceRef.current = cached.displayedPrice;
+          lastProcessedTickRef.current = null;
+
+          historicalDataLoadedRef.current = true;
+          isLoadingRef.current = false;
+          isDataReadyRef.current = cached.candles.length >= 2;
+          firstTickAfterHistoryRef.current = false;
+          liveWarmupUntilRef.current = 0;
+          skipSyncAnchorRef.current = true;
+
+          syncChartLoadingState();
+
+          const syncNow = currentTimeRef.current instanceof Date
+            ? currentTimeRef.current.getTime()
+            : Date.now();
+          const lastCached = candlesRef.current[candlesRef.current.length - 1];
+          const fillPrice = engine.realPrice > 0
+            ? engine.realPrice
+            : engine.visualPrice > 0
+              ? engine.visualPrice
+              : lastCached?.close ?? 0;
+          const targetPeriod = getBarPeriodStart(syncNow, timeframe);
+          let fillOk = true;
+          if (fillPrice > 0) {
+            fillOk = fillCandlesUpToPeriod(targetPeriod, fillPrice, syncNow);
+          }
+
+          if (!fillOk) {
+            deleteChartCache(cacheKey);
+            candlesRef.current = [];
+            liveCandleRef.current = null;
+            historicalDataLoadedRef.current = false;
+            isLoadingRef.current = true;
+            setShowChartLoading(true);
+            onLoadingChangeRef.current?.(true);
+            loadHistoricalData().then(() => {});
+          } else {
+            viewportRef.current.isAtEnd = true;
+            const count = viewportRef.current.visibleCandleCount;
+            viewportRef.current.visibleStartIndex = Math.max(0, candlesRef.current.length - count);
+
+          }
+
+          if (historicalDataLoadedRef.current) {
+            if (animationFrameRef.current !== null) {
+              cancelAnimationFrame(animationFrameRef.current);
+            }
+            animate();
+
+            return () => {
+              if (animationFrameRef.current !== null) {
+                cancelAnimationFrame(animationFrameRef.current);
+                animationFrameRef.current = null;
+              }
+            };
+          }
+        }
+      }
+
       // CRÍTICO: Resetar estado de carregamento quando símbolo ou timeframe mudar
       isLoadingRef.current = true;
       historicalDataLoadedRef.current = false;
@@ -5289,6 +5631,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
               isDragging: false,
               toolId: null,
               toolType: null,
+              dragMode: 'move',
+              endpointIndex: null,
               startMouseX: 0,
               startMouseY: 0,
               startPrice: null,
@@ -5367,6 +5711,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                         isDragging: false,
                         toolId: tool.id,
                         toolType: tool.type,
+                        dragMode: 'move',
+                        endpointIndex: null,
                         startMouseX: mouseX,
                         startMouseY: mouseY,
                         startPrice: point.price || null,
@@ -5407,6 +5753,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                         isDragging: false,
                         toolId: tool.id,
                         toolType: tool.type,
+                        dragMode: 'move',
+                        endpointIndex: null,
                         startMouseX: mouseX,
                         startMouseY: mouseY,
                         startPrice: null,
@@ -5493,6 +5841,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                           isDragging: false,
                           toolId: tool.id,
                           toolType: tool.type,
+                          dragMode: 'move',
+                          endpointIndex: null,
                           startMouseX: mouseX,
                           startMouseY: mouseY,
                           startPrice: mousePrice,
@@ -5508,97 +5858,110 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   continue; // Se não clicou no Fibonacci, continuar para outras ferramentas
                 }
                 
-                // Para outras ferramentas (linha, trendline), precisa de 2 pontos
-                if (tool.points.length < 2) continue;
-                
-                // Calcular distância do ponto de clique até a linha
-                const p1 = tool.points[0];
-                const p2 = tool.points[1];
-                
-                // Recalcular coordenadas dos pontos
-                let x1 = p1.x, y1 = p1.y, x2 = p2.x, y2 = p2.y;
-                
-                if (p1.time !== undefined) {
-                  const tx1 = getChartXFromTime(p1.time);
-                  if (tx1 !== null) x1 = tx1;
-                }
-                if (p2.time !== undefined) {
-                  const tx2 = getChartXFromTime(p2.time);
-                  if (tx2 !== null) x2 = tx2;
-                }
-                
-                if (p1.price !== undefined && p2.price !== undefined) {
-                  y1 = screenYFromPrice(p1.price, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-                  y2 = screenYFromPrice(p2.price, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-                }
-                
-                // Calcular distância do ponto até a linha
-                const A = mouseX - x1;
-                const B = mouseY - y1;
-                const C = x2 - x1;
-                const D = y2 - y1;
-                const dot = A * C + B * D;
-                const lenSq = C * C + D * D;
-                let param = -1;
-                if (lenSq !== 0) param = dot / lenSq;
-                
-                let xx, yy;
-                if (param < 0) {
-                  xx = x1;
-                  yy = y1;
-                } else if (param > 1) {
-                  xx = x2;
-                  yy = y2;
-                } else {
-                  xx = x1 + param * C;
-                  yy = y1 + param * D;
-                }
-                
-                const dx = mouseX - xx;
-                const dy = mouseY - yy;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                
-                // Aumentar área clicável para 25 pixels (incluindo os quadrados de 6px)
-                if (distance < 25) {
-                  // Sempre chamar onToolClick para selecionar a ferramenta
-                  if (onToolClick) {
-                    onToolClick(tool.id, tool.type, { x: mouseX, y: mouseY });
+                // Para linha e trendline — handles nas pontas + corpo da linha
+                if ((tool.type === 'line' || tool.type === 'trendline') && tool.points.length >= 2) {
+                  const endpoints = resolveLineEndpointsScreen(
+                    tool,
+                    chartY,
+                    chartHeight,
+                    actualMinPrice,
+                    actualMaxPrice,
+                  );
+                  if (!endpoints) continue;
+
+                  const { x1, y1, x2, y2 } = endpoints;
+                  const endpointCoords = [{ x: x1, y: y1 }, { x: x2, y: y2 }];
+                  const endpointHitRadius = getEndpointHitRadius();
+
+                  // Prioridade: arrastar ponta (handle)
+                  for (let epIdx = 0; epIdx < endpointCoords.length; epIdx++) {
+                    const ep = endpointCoords[epIdx];
+                    const epDistance = Math.hypot(mouseX - ep.x, mouseY - ep.y);
+                    if (epDistance < endpointHitRadius) {
+                      if (onToolClick) {
+                        onToolClick(tool.id, tool.type, { x: mouseX, y: mouseY });
+                      }
+                      if (onToolMove) {
+                        toolDraggingRef.current = {
+                          isDragging: true,
+                          toolId: tool.id,
+                          toolType: tool.type,
+                          dragMode: 'endpoint',
+                          endpointIndex: epIdx,
+                          startMouseX: mouseX,
+                          startMouseY: mouseY,
+                          startPrice: null,
+                          startTime: null,
+                          initialDeltaPrice: null,
+                          initialDeltaTime: null,
+                          originalPoints: tool.points.map(p => ({ price: p.price, time: p.time })),
+                        };
+                      }
+                      return;
+                    }
                   }
-                  // Se a ferramenta já está selecionada, preparar para arraste (será iniciado no mouse move)
-                  if (selectedToolIdRef.current === tool.id && onToolMove) {
-                    const { actualMinPrice, actualMaxPrice } = chartLayoutRef.current;
-                    const mousePrice = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
-                    const mouseTime = getTimeFromX(mouseX);
-                    
-                    // Para linha/trendline, calcular delta baseado no ponto médio
-                    const avgPrice = p1.price !== undefined && p2.price !== undefined 
-                      ? (p1.price + p2.price) / 2 
-                      : (p1.price || p2.price || null);
-                    const avgTime = p1.time !== undefined && p2.time !== undefined
-                      ? (p1.time + p2.time) / 2
-                      : (p1.time || p2.time || null);
-                    
-                    // Calcular delta inicial (offset entre mouse e ponto médio da ferramenta)
-                    const initialDeltaPrice = avgPrice !== null ? (mousePrice - avgPrice) : 0;
-                    const initialDeltaTime = avgTime !== null ? ((mouseTime || 0) - avgTime) : 0;
-                    
-                    // Salvar pontos originais para referência
-                    const originalPoints = tool.points.map(p => ({ price: p.price, time: p.time }));
-                    
-                    toolDraggingRef.current = {
-                      isDragging: false, // Ainda não está arrastando, apenas preparado
-                      toolId: tool.id,
-                      toolType: tool.type,
-                      startMouseX: mouseX,
-                      startMouseY: mouseY,
-                      startPrice: mousePrice,
-                      startTime: mouseTime || 0,
-                      initialDeltaPrice: initialDeltaPrice,
-                      initialDeltaTime: initialDeltaTime,
-                      originalPoints: originalPoints
-                    };
+
+                  // Corpo da linha — selecionar / mover inteira
+                  const A = mouseX - x1;
+                  const B = mouseY - y1;
+                  const C = x2 - x1;
+                  const D = y2 - y1;
+                  const dot = A * C + B * D;
+                  const lenSq = C * C + D * D;
+                  let param = -1;
+                  if (lenSq !== 0) param = dot / lenSq;
+
+                  let xx: number;
+                  let yy: number;
+                  if (param < 0) {
+                    xx = x1;
+                    yy = y1;
+                  } else if (param > 1) {
+                    xx = x2;
+                    yy = y2;
+                  } else {
+                    xx = x1 + param * C;
+                    yy = y1 + param * D;
                   }
-                  return; // Não fazer pan quando clicou em uma ferramenta
+
+                  const distance = Math.hypot(mouseX - xx, mouseY - yy);
+                  if (distance < getLineBodyHitRadius()) {
+                    if (onToolClick) {
+                      onToolClick(tool.id, tool.type, { x: mouseX, y: mouseY });
+                    }
+                    if (onToolMove) {
+                      const mousePrice = getPriceFromY(mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
+                      const mouseTime = getTimeFromX(mouseX);
+                      const p1 = tool.points[0];
+                      const p2 = tool.points[1];
+                      const avgPrice = p1.price !== undefined && p2.price !== undefined
+                        ? (p1.price + p2.price) / 2
+                        : (p1.price || p2.price || null);
+                      const avgTime = p1.time !== undefined && p2.time !== undefined
+                        ? (p1.time + p2.time) / 2
+                        : (p1.time || p2.time || null);
+                      const initialDeltaPrice = avgPrice !== null ? (mousePrice - avgPrice) : 0;
+                      const initialDeltaTime = avgTime !== null ? ((mouseTime || 0) - avgTime) : 0;
+                      const originalPoints = tool.points.map(p => ({ price: p.price, time: p.time }));
+
+                      toolDraggingRef.current = {
+                        isDragging: false,
+                        toolId: tool.id,
+                        toolType: tool.type,
+                        dragMode: 'move',
+                        endpointIndex: null,
+                        startMouseX: mouseX,
+                        startMouseY: mouseY,
+                        startPrice: mousePrice,
+                        startTime: mouseTime || 0,
+                        initialDeltaPrice,
+                        initialDeltaTime,
+                        originalPoints,
+                      };
+                    }
+                    return;
+                  }
+                  continue;
                 }
               }
             }
@@ -5698,8 +6061,9 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           const deltaX = Math.abs(viewportRef.current.mouseX - toolDraggingRef.current.startMouseX);
           const deltaY = Math.abs(viewportRef.current.mouseY - toolDraggingRef.current.startMouseY);
           
-          // Threshold baixo de 3px para iniciar arraste — drag já foi preparado no mouseDown
-          if (deltaX > 3 || deltaY > 3) {
+          // Threshold para iniciar arraste (maior no touch)
+          const dragThreshold = getDragStartThreshold();
+          if (deltaX > dragThreshold || deltaY > dragThreshold) {
             toolDraggingRef.current.isDragging = true;
           }
         }
@@ -5740,6 +6104,26 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                   time: newTime,
                 }));
               } else if (tool.type === 'line' || tool.type === 'trendline') {
+                if (toolDraggingRef.current.dragMode === 'endpoint') {
+                  const idx = toolDraggingRef.current.endpointIndex ?? 0;
+                  const newPrice = getPriceFromY(viewportRef.current.mouseY, chartY, chartHeight, actualMinPrice, actualMaxPrice);
+                  const newTime = getTimeFromX(viewportRef.current.mouseX);
+                  if (newTime === null) return;
+
+                  newPoints = tool.points.map((p, i) => {
+                    if (i !== idx) return { ...p };
+                    const layout = chartLayoutRef.current;
+                    const newX = screenXFromChartTime(newTime, layout);
+                    const newY = screenYFromPrice(newPrice, chartY, chartHeight, actualMinPrice, actualMaxPrice);
+                    return {
+                      ...p,
+                      price: newPrice,
+                      time: newTime,
+                      x: newX,
+                      y: newY,
+                    };
+                  });
+                } else {
                 // DELTA DRAGGING: Usar offset inicial para movimento preciso
                 const initialDeltaPrice = toolDraggingRef.current.initialDeltaPrice;
                 const initialDeltaTime = toolDraggingRef.current.initialDeltaTime;
@@ -5804,6 +6188,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                     price: p.price !== undefined ? getPriceFromY((p.y || 0) + deltaY, chartY, chartHeight, actualMinPrice, actualMaxPrice) : p.price,
                     time: p.time !== undefined ? getTimeFromX((p.x || 0) + deltaX) : p.time
                   }));
+                }
                 }
               } else if (tool.type === 'fibonacci') {
                 // DELTA DRAGGING para Fibonacci: usar offset inicial para movimento preciso
@@ -5938,6 +6323,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             isDragging: false,
             toolId: null,
             toolType: null,
+            dragMode: 'move',
+            endpointIndex: null,
             startMouseX: 0,
             startMouseY: 0,
             startPrice: null,
@@ -6027,6 +6414,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                 type: mappedType,
                 color,
                 style,
+                lineWidth: defaultGraphicToolLineWidth(mappedType),
                 visible: true,
                 points: pointsCopy, // Usar cópia profunda dos pontos
               };
@@ -6122,8 +6510,25 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                     canvas.style.cursor = 'ew-resize';
                     break;
                   }
-                } else if ((tool.type === 'line' || tool.type === 'trendline' || tool.type === 'fibonacci') && tool.points.length >= 2) {
-                  // Verificar proximidade de linhas/trendlines
+                } else if ((tool.type === 'line' || tool.type === 'trendline') && tool.points.length >= 2) {
+                  const endpoints = resolveLineEndpointsScreen(
+                    tool,
+                    toolChartY,
+                    toolChartHeight,
+                    aMinP,
+                    aMaxP,
+                  );
+                  if (endpoints) {
+                    const { x1, y1, x2, y2 } = endpoints;
+                    const nearEndpoint = [{ x: x1, y: y1 }, { x: x2, y: y2 }].some(
+                      (pt) => Math.hypot(mouseX - pt.x, mouseY - pt.y) < getEndpointHitRadius(),
+                    );
+                    if (nearEndpoint) {
+                      isOverGraphicTool = true;
+                      canvas.style.cursor = 'crosshair';
+                      break;
+                    }
+                  }
                   const p1 = tool.points[0];
                   const p2 = tool.points[1];
                   if (p1.price !== undefined && p2.price !== undefined && p1.time !== undefined && p2.time !== undefined) {
@@ -6141,7 +6546,31 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
                       const projX = x1 + t * dx;
                       const projY = y1 + t * dy;
                       const dist = Math.sqrt((mouseX - projX) ** 2 + (mouseY - projY) ** 2);
-                      if (dist < 10) {
+                      if (dist < (isCoarsePointerRef.current ? 18 : 10)) {
+                        isOverGraphicTool = true;
+                        canvas.style.cursor = 'move';
+                        break;
+                      }
+                    }
+                  }
+                } else if (tool.type === 'fibonacci' && tool.points.length >= 2) {
+                  const p1 = tool.points[0];
+                  const p2 = tool.points[1];
+                  if (p1.price !== undefined && p2.price !== undefined && p1.time !== undefined && p2.time !== undefined) {
+                    const y1 = screenYFromPrice(p1.price, toolChartY, toolChartHeight, aMinP, aMaxP);
+                    const y2 = screenYFromPrice(p2.price, toolChartY, toolChartHeight, aMinP, aMaxP);
+                    const x1 = getChartXFromTime(p1.time);
+                    const x2 = getChartXFromTime(p2.time);
+                    if (x1 === null || x2 === null) continue;
+                    const dx = x2 - x1;
+                    const dy = y2 - y1;
+                    const lenSq = dx * dx + dy * dy;
+                    if (lenSq > 0) {
+                      const t = Math.max(0, Math.min(1, ((mouseX - x1) * dx + (mouseY - y1) * dy) / lenSq));
+                      const projX = x1 + t * dx;
+                      const projY = y1 + t * dy;
+                      const dist = Math.sqrt((mouseX - projX) ** 2 + (mouseY - projY) ** 2);
+                      if (dist < (isCoarsePointerRef.current ? 18 : 10)) {
                         isOverGraphicTool = true;
                         canvas.style.cursor = 'move';
                         break;
@@ -6163,6 +6592,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
           const dragTool = graphicToolsRef.current.find(t => t.id === toolDraggingRef.current.toolId);
           if (dragTool?.type === 'horizontal') canvas.style.cursor = 'ns-resize';
           else if (dragTool?.type === 'vertical') canvas.style.cursor = 'ew-resize';
+          else if (toolDraggingRef.current.dragMode === 'endpoint') canvas.style.cursor = 'crosshair';
           else canvas.style.cursor = 'move';
         } else if (toolDrawingRef.current.isDrawing) {
           canvas.style.cursor = 'crosshair';
@@ -6218,15 +6648,14 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         }
       };
 
-      const TAP_THRESHOLD_PX = 12;
-
       const handleTouchMove = (e: TouchEvent) => {
         e.preventDefault();
+        const tapThreshold = isCoarsePointerRef.current ? 16 : 12;
 
         if (e.touches.length === 1) {
           const dx = e.touches[0].clientX - touchStartX;
           const dy = e.touches[0].clientY - touchStartY;
-          if (Math.sqrt(dx * dx + dy * dy) > TAP_THRESHOLD_PX) {
+          if (Math.sqrt(dx * dx + dy * dy) > tapThreshold) {
             touchMoved = true;
           }
         } else {
@@ -6274,7 +6703,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         e.preventDefault();
         lastTouchDistance = 0;
 
-        if (e.changedTouches.length === 1 && !touchMoved) {
+        if (e.changedTouches.length === 1 && !touchMoved && !toolDraggingRef.current.toolId) {
           const touch = e.changedTouches[0];
           tryCloseSnapshotAtClientRef.current(touch.clientX, touch.clientY);
         }
@@ -6476,6 +6905,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             width: '100%',
             height: '100%',
             display: 'block',
+            touchAction: 'none',
             willChange: 'contents', // Otimização para animações suaves
             imageRendering: 'crisp-edges', // Melhor renderização de linhas
             cursor: hoveredCloseButton ? 'pointer' : (isOverSnapshot ? 'default' : 'default'),
@@ -6550,16 +6980,10 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
             Erro de conexão: {error}
           </div>
         )}
-        {loadingVariant === 'compact' && (showChartLoading || !isConnected) && (
+        {loadingVariant === 'compact' && showChartLoading && (
           <ChartLoadingScreen
             variant="compact"
-            message={
-              showChartLoading
-                ? 'Carregando dados do mercado...'
-                : error
-                  ? 'Reconectando ao servidor...'
-                  : 'Conectando ao servidor...'
-            }
+            message="Carregando dados do mercado..."
           />
         )}
         <div

@@ -15,21 +15,34 @@ export interface AnchorPriceResult {
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const REDIS_KEY_PREFIX = 'PRICE:LATEST:';
+const REDIS_CONNECT_MS = 400;
+
+function isUnreachableLocalRedis(url: string): boolean {
+  if (process.env.NODE_ENV !== 'production') return false;
+  try {
+    const host = new URL(url).hostname;
+    return host === 'localhost' || host === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
 
 async function fetchRedisLatest(symbol: string): Promise<number> {
+  if (isUnreachableLocalRedis(REDIS_URL)) return 0;
+
   let client: ReturnType<typeof createClient> | null = null;
   try {
     client = createClient({
       url: REDIS_URL,
       socket: {
-        connectTimeout: 3000,
+        connectTimeout: REDIS_CONNECT_MS,
         reconnectStrategy: () => false,
       },
     });
     client.on('error', () => {});
     await Promise.race([
       client.connect(),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), REDIS_CONNECT_MS)),
     ]);
     const raw = await client.get(`${REDIS_KEY_PREFIX}${symbol}`);
     if (!raw) return 0;

@@ -1,9 +1,5 @@
 /**
- * Hook para gerenciar trades ativos
- * 
- * Apenas carrega trades ativos do banco. O processamento de resultados
- * é feito exclusivamente pelo processTradeResult no componente de trading
- * (com preço real do gráfico, toast moderno e atualização de saldo).
+ * Hook para gerenciar trades ativos da conta ativa (demo ou real).
  */
 
 import { useEffect, useState, useRef } from 'react';
@@ -11,31 +7,36 @@ import { tradeService } from '@/services/tradeService';
 import { Trade } from '@/lib/db';
 import { logger } from '@/utils/logger';
 import { useAuth } from '@/contexts/AuthContext';
+import { isTradeForAccount } from '@/lib/tradeAccountStorage';
 
 export function useActiveTrades() {
-  const { user } = useAuth();
+  const { user, accountType } = useAuth();
   const [activeTrades, setActiveTrades] = useState<Trade[]>([]);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!user) {
+      setActiveTrades([]);
       return;
     }
 
-    // Carregar trades ativos
     const loadActiveTrades = async () => {
       try {
         const allTrades = await tradeService.getUserTrades(user.id);
         const active = allTrades.filter(
-          trade => !trade.result && trade.expiration > Date.now()
+          (trade) =>
+            !trade.result &&
+            trade.expiration > Date.now() &&
+            isTradeForAccount(trade, accountType),
         );
         setActiveTrades(active);
-      } catch (error: any) {
-        if (error?.code === '42P01' || error?.message?.includes('does not exist')) {
+      } catch (error: unknown) {
+        const err = error as { code?: string; message?: string };
+        if (err?.code === '42P01' || err?.message?.includes('does not exist')) {
           setActiveTrades([]);
           return;
         }
-        const errorMessage = error?.message || error?.toString() || 'Erro desconhecido';
+        const errorMessage = err?.message || String(error) || 'Erro desconhecido';
         logger.error('Erro ao carregar trades ativos:', errorMessage);
         setActiveTrades([]);
       }
@@ -43,7 +44,6 @@ export function useActiveTrades() {
 
     loadActiveTrades();
 
-    // Recarregar trades ativos periodicamente (apenas leitura, sem processar resultados)
     intervalRef.current = setInterval(() => {
       loadActiveTrades();
     }, 5000);
@@ -53,9 +53,7 @@ export function useActiveTrades() {
         clearInterval(intervalRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [user?.id, accountType]);
 
   return { activeTrades };
 }
-

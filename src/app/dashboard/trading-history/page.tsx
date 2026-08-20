@@ -50,6 +50,7 @@ interface TradeRecord {
   exitPrice: number | null;
   result: 'win' | 'loss' | null;
   profit: number | null;
+  accountType: 'demo' | 'real';
   createdAt: string;
   updatedAt: string;
 }
@@ -108,7 +109,6 @@ export default function TradingHistoryPage() {
   // Filtros
   const [filters, setFilters] = useState({
     tradingInstrument: 'all',
-    accountType: 'real',
     dateFrom: '',
     dateTo: '',
     assetCategory: 'all',
@@ -222,7 +222,11 @@ export default function TradingHistoryPage() {
     if (user) {
       loadTradingHistory();
     }
-  }, [user, filters]);
+  }, [user, filters, accountType]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [accountType]);
 
   const loadTradingHistory = async () => {
     if (!supabase || !user) return;
@@ -261,6 +265,7 @@ export default function TradingHistoryPage() {
           exitPrice: trade.exit_price ? parseFloat(trade.exit_price) : null,
           result: trade.result,
           profit: trade.profit ? parseFloat(trade.profit) : null,
+          accountType: trade.account_type === 'demo' ? 'demo' : 'real',
           createdAt: trade.created_at,
           updatedAt: trade.updated_at,
         }));
@@ -276,9 +281,10 @@ export default function TradingHistoryPage() {
 
   // Filtrar por categoria de ativo
   const filteredTrades = useMemo(() => {
-    if (filters.assetCategory === 'all') return trades;
-    return trades.filter(t => getAssetCategory(t.symbol) === filters.assetCategory);
-  }, [trades, filters.assetCategory]);
+    let list = trades.filter(t => t.accountType === accountType);
+    if (filters.assetCategory === 'all') return list;
+    return list.filter(t => getAssetCategory(t.symbol) === filters.assetCategory);
+  }, [trades, filters.assetCategory, accountType]);
 
   // Estatísticas (sobre trades filtrados)
   const stats = useMemo(() => {
@@ -341,7 +347,7 @@ export default function TradingHistoryPage() {
   };
 
   const canDownload = () => {
-    if (filters.accountType !== 'real') return false;
+    if (accountType !== 'real') return false;
     if (filters.dateFrom && filters.dateTo) {
       const from = new Date(filters.dateFrom);
       const to = new Date(filters.dateTo);
@@ -629,7 +635,7 @@ export default function TradingHistoryPage() {
                   <div className="col-span-2 text-[10px] font-medium text-gray-500 uppercase tracking-wider text-right">Investimento</div>
                   <div className="col-span-2 text-[10px] font-medium text-gray-500 uppercase tracking-wider text-right">Preço Entrada</div>
                   <div className="col-span-1 text-[10px] font-medium text-gray-500 uppercase tracking-wider text-center">Status</div>
-                  <div className="col-span-2 text-[10px] font-medium text-gray-500 uppercase tracking-wider text-right">Resultado</div>
+                  <div className="col-span-2 text-[10px] font-medium text-gray-500 uppercase tracking-wider text-right">Lucro</div>
                 </div>
 
                 {/* Linhas */}
@@ -689,12 +695,12 @@ export default function TradingHistoryPage() {
                           {isWin ? 'WIN' : isLoss ? 'LOSS' : '-'}
                         </span>
                       </div>
-                      {/* Resultado */}
+                      {/* Lucro */}
                       <div className="col-span-2 flex items-center justify-end">
                         <span className={`text-sm font-bold ${
                           isWin ? 'text-green-400' : isLoss ? 'text-red-400' : 'text-gray-400'
                         }`}>
-                          {isWin ? '+' : ''}{formatCurrency(profitValue)}
+                          {isWin ? '+' : isLoss ? '-' : ''}{formatCurrency(Math.abs(profitValue))}
                         </span>
                       </div>
                     </div>

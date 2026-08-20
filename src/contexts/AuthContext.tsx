@@ -35,7 +35,11 @@ interface AuthContextType {
   refreshEmailVerified: () => Promise<void>;
   logout: () => void;
   switchAccount: (type: AccountType) => void;
-  updateBalance: (newBalance: number) => void;
+  updateBalance: (newBalance: number, targetAccount?: AccountType) => void;
+  /** Aplica delta no saldo da conta demo ou real (default: conta ativa) */
+  applyBalanceDelta: (delta: number, targetAccount?: AccountType) => void;
+  /** Recarrega balance e demo_balance do banco (ex.: após depósito aprovado) */
+  refreshBalancesFromDB: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -623,30 +627,69 @@ function withTimeout<T>(promise: PromiseLike<T>, ms: number, message: string): P
     localStorage.setItem(ACCOUNT_TYPE_KEY, type);
   };
 
-  // --- Atualizar saldo (respeita accountType) ---
-  const updateBalance = (newBalance: number) => {
+  // --- Atualizar saldo de uma conta específica (demo ou real) ---
+  const updateBalance = useCallback((newBalance: number, targetAccount?: AccountType) => {
     if (!user) return;
 
-    const isDemoAccount = accountType === 'demo';
-    const updatedUser: User = isDemoAccount
-      ? { ...user, demoBalance: newBalance, updatedAt: new Date() }
-      : { ...user, balance: newBalance, updatedAt: new Date() };
+    const account = targetAccount ?? accountType;
+    const rounded = Math.round(newBalance * 100) / 100;
+    const updatedUser: User =
+      account === 'demo'
+        ? { ...user, demoBalance: rounded, updatedAt: new Date() }
+        : { ...user, balance: rounded, updatedAt: new Date() };
 
     setUser(updatedUser);
     localStorage.setItem('user_data', JSON.stringify(updatedUser));
 
-    // Persistir no banco
     if (supabase && user.id) {
-      const dbField = isDemoAccount ? 'demo_balance' : 'balance';
+      const dbField = account === 'demo' ? 'demo_balance' : 'balance';
       supabase
         .from('users')
-        .update({ [dbField]: newBalance, updated_at: new Date().toISOString() })
+        .update({ [dbField]: rounded, updated_at: new Date().toISOString() })
         .eq('id', user.id)
         .then(({ error }) => {
           if (error) logger.error('Erro ao persistir saldo:', error.message);
         });
     }
-  };
+  }, [user, accountType]);
+
+  const applyBalanceDelta = useCallback(
+    (delta: number, targetAccount?: AccountType) => {
+      if (!user || delta === 0) return;
+      const account = targetAccount ?? accountType;
+      const current = account === 'demo' ? user.demoBalance : user.balance;
+      updateBalance(current + delta, account);
+    },
+    [user, accountType, updateBalance],
+  );
+
+  const refreshBalancesFromDB = useCallback(async () => {
+    if (!user?.email) return;
+    const fresh = await fetchUserFromDB(user.email);
+    if (!fresh) return;
+    setUser((prev) => {
+      if (!prev) return fresh;
+      const next = {
+        ...prev,
+        balance: fresh.balance,
+        demoBalance: fresh.demoBalance,
+        updatedAt: fresh.updatedAt,
+      };
+      localStorage.setItem('user_data', JSON.stringify(next));
+      return next;
+    });
+  }, [user?.email]);
+
+  // Ao voltar à aba: sincronizar saldos do banco (depósitos/saques processados server-side)
+  useEffect(() => {
+    const onVisible = () => {
+      if (!document.hidden && user?.email) {
+        void refreshBalancesFromDB();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [user?.email, refreshBalancesFromDB]);
 
   const value: AuthContextType = {
     user,
@@ -665,6 +708,8 @@ function withTimeout<T>(promise: PromiseLike<T>, ms: number, message: string): P
     logout,
     switchAccount,
     updateBalance,
+    applyBalanceDelta,
+    refreshBalancesFromDB,
   };
 
   return (

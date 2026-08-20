@@ -6,6 +6,7 @@
 
 import { db, Trade } from '@/lib/db';
 import { logger } from '@/utils/logger';
+import type { AccountType } from '@/types';
 
 export interface TradeExecutionParams {
   userId: string;
@@ -14,6 +15,7 @@ export interface TradeExecutionParams {
   amount: number;
   expiration: number; // minutos OU timestamp em milissegundos (se > 1000000000000)
   entryPrice: number;
+  accountType?: AccountType;
 }
 
 export interface TradeResult {
@@ -56,6 +58,7 @@ export class TradeService {
         amount: params.amount,
         expiration: expirationTimestamp, // Manter em milissegundos (será convertido ao salvar no banco)
         entryPrice: params.entryPrice,
+        accountType: params.accountType ?? 'real',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };

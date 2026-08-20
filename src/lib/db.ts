@@ -25,6 +25,8 @@ export function getDatabaseConfig(): DatabaseConfig {
 export const dbConfig = getDatabaseConfig();
 
 // Tipos de dados
+import type { AccountType } from '@/types';
+
 export interface Trade {
   id: string;
   userId: string;
@@ -36,6 +38,7 @@ export interface Trade {
   exitPrice?: number;
   result?: 'win' | 'loss';
   profit?: number;
+  accountType?: AccountType;
   createdAt: number;
   updatedAt: number;
 }
@@ -91,6 +94,7 @@ export class DatabaseClient {
             exit_price: trade.exitPrice || null,
             result: trade.result || null,
             profit: trade.profit || null,
+            account_type: trade.accountType ?? 'real',
             created_at: new Date(trade.createdAt).toISOString(),
             updated_at: new Date(trade.updatedAt).toISOString(),
           })
@@ -381,6 +385,7 @@ export class DatabaseClient {
       exitPrice: data.exit_price ? parseFloat(data.exit_price) : undefined,
       result: data.result || undefined,
       profit: data.profit ? parseFloat(data.profit) : undefined,
+      accountType: data.account_type === 'demo' ? 'demo' : 'real',
       createdAt: new Date(data.created_at).getTime(),
       updatedAt: new Date(data.updated_at).getTime(),
     };

@@ -75,7 +75,7 @@ import {
   Globe,
   LayoutGrid
 } from 'lucide-react';
-import { AnimatedCanvasChart, AnimatedCanvasChartRef } from '@/components/charts/AnimatedCanvasChart';
+import { AnimatedCanvasChart, AnimatedCanvasChartRef, defaultGraphicToolLineWidth } from '@/components/charts/AnimatedCanvasChart';
 import { MarketLoading } from '@/components/ui/MarketLoading';
 import { ChartLoadingScreen } from '@/components/ui/ChartLoadingScreen';
 import { useMarketData } from '@/hooks/useMarketData';
@@ -84,6 +84,12 @@ import { marketService } from '@/services/marketService';
 import { getMarketStatus, MarketCategory } from '@/utils/marketHours';
 import { tradeService } from '@/services/tradeService';
 import { settleTrade } from '@/utils/tradeSettlement';
+import {
+  saveTradeAccountType,
+  getTradeAccountType,
+  clearTradeAccountType,
+  isTradeForAccount,
+} from '@/lib/tradeAccountStorage';
 import { getAllTradingConfigs } from '@/services/tradingConfigService';
 import { PortfolioTotal } from '@/components/trading/PortfolioTotal';
 import { TradeHistory } from '@/components/trading/TradeHistory';
@@ -140,10 +146,14 @@ const GatewayIcon: React.FC<{ gateway: { name: string; type: string }; iconUrl: 
 };
 
 const TradingPage: React.FC = () => {
-  const { user, updateBalance, logout, accountType, switchAccount, activeBalance } = useAuth();
+  const { user, applyBalanceDelta, refreshBalancesFromDB, logout, accountType, switchAccount, activeBalance } = useAuth();
   // Ref para evitar stale closure no processTradeResult
   const activeBalanceRef = React.useRef(activeBalance);
   activeBalanceRef.current = activeBalance;
+  const accountTypeRef = React.useRef(accountType);
+  React.useEffect(() => {
+    accountTypeRef.current = accountType;
+  }, [accountType]);
   const { soundEnabled, toggleSound, playUiClick, playTradeClick, playWin, playLoss } = useSounds();
 
   const handleUiButtonClick = useCallback(
@@ -154,23 +164,6 @@ const TradingPage: React.FC = () => {
   );
 
   // Remonta o gráfico ao voltar à aba (evita candles congelados/desordenados após background)
-  const [chartReloadKey, setChartReloadKey] = useState(0);
-
-  useEffect(() => {
-    let wasHidden = false;
-
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        wasHidden = true;
-      } else if (wasHidden) {
-        wasHidden = false;
-        setChartReloadKey((k) => k + 1);
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
   const [brokerLogo, setBrokerLogo] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('broker_logo_dark') || localStorage.getItem('broker_logo');
@@ -223,7 +216,7 @@ const TradingPage: React.FC = () => {
     return ['BTC/USD', 'ETH/USD'];
   });
   const [showAddPairModal, setShowAddPairModal] = useState(false); // Modal para adicionar pares
-  const [tradeValue, setTradeValue] = useState(540);
+  const [tradeValue, setTradeValue] = useState(100);
   const [expiration, setExpiration] = useState(18);
   const [currentTime, setCurrentTime] = useState(new Date());
   // Horário de expiração para a linha vertical no gráfico (inicialmente próximo minuto)
@@ -239,6 +232,18 @@ const TradingPage: React.FC = () => {
   const [, setCardTimerTick] = useState(0); // Tick para forçar re-render dos timers nos cards
   const processedTradeIdsRef = useRef<Set<string>>(new Set()); // IDs de trades já processados
   const [closedSnapshots, setClosedSnapshots] = useState<Set<string>>(new Set()); // IDs de snapshots fechados pelo usuário
+
+  const tradesForCurrentAccount = useMemo(
+    () => localActiveTrades.filter((t) => isTradeForAccount(t, accountType)),
+    [localActiveTrades, accountType],
+  );
+
+  // Ao trocar demo/real, limpar overlays da outra conta no gráfico e nos cards
+  useEffect(() => {
+    setTradeResults({});
+    setClosedSnapshots(new Set());
+  }, [accountType]);
+
   const [currentPrice, setCurrentPrice] = useState<number>(0);
   const lastKnownPricesRef = useRef<Map<string, number>>(new Map());
   const [availablePairs, setAvailablePairs] = useState<string[]>([]);
@@ -247,6 +252,17 @@ const TradingPage: React.FC = () => {
   const [showTimeframes, setShowTimeframes] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1m' | '2m' | '5m' | '10m' | '15m' | '30m' | '1h' | '2h' | '4h' | '8h' | '12h' | '1d' | '1w' | '1M'>('1m');
+  const selectedAssetRef = useRef(selectedAsset);
+  const selectedTimeframeRef = useRef(selectedTimeframe);
+
+  useEffect(() => {
+    selectedAssetRef.current = selectedAsset;
+  }, [selectedAsset]);
+
+  useEffect(() => {
+    selectedTimeframeRef.current = selectedTimeframe;
+  }, [selectedTimeframe]);
+
   const [candleTimer, setCandleTimer] = useState(true);
   const [autoResize, setAutoResize] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<string>('all'); // 'all', 'forex', 'crypto', 'stocks', 'indices', 'commodities'
@@ -414,14 +430,16 @@ const TradingPage: React.FC = () => {
         amount: tradeValue,
         expiration: expirationTimestamp,
         entryPrice: snapshotPrice,
+        accountType: accountTypeRef.current,
       });
       if (result.success) {
         const newTrade: Trade = { ...result.trade, entryPrice: snapshotPrice };
+        saveTradeAccountType(newTrade.id, accountTypeRef.current);
         setLocalActiveTrades((prev) => [...prev, newTrade]);
         localActiveTradesRef.current = [...localActiveTradesRef.current, newTrade];
         lastKnownPricesRef.current.set(selectedAsset, snapshotPrice);
         setRealTimePrices((prev) => ({ ...prev, [selectedAsset]: snapshotPrice }));
-        if (user) animateBalance(activeBalance, activeBalance - tradeValue);
+        if (user) applyBalanceDelta(-tradeValue, accountTypeRef.current);
       } else {
         toast.error(result.message || 'Erro ao executar trade');
       }
@@ -546,8 +564,10 @@ const TradingPage: React.FC = () => {
     icon: string;
     color: string;
     style: 'solid' | 'dashed' | 'dotted';
+    lineWidth?: number;
     visible: boolean;
     createdAt: number;
+    symbol: string;
     // Dados de desenho
     points?: Array<{ x: number; y: number; price?: number; time?: number }>; // Coordenadas em pixels e dados do gráfico
     type: 'line' | 'trendline' | 'horizontal' | 'vertical' | 'fibonacci';
@@ -581,6 +601,22 @@ const TradingPage: React.FC = () => {
   useEffect(() => {
     activeToolsRef.current = activeTools;
   }, [activeTools]);
+
+  const toolsForCurrentAsset = useMemo(
+    () => activeTools.filter((tool) => tool.symbol === selectedAsset),
+    [activeTools, selectedAsset],
+  );
+
+  // Ao trocar de ativo: ocultar painel flutuante e limpar seleção de ferramenta
+  useEffect(() => {
+    setSelectedToolOnChart(null);
+    setSelectedToolForEdit(null);
+    setShowToolProperties(false);
+    setSelectedToolType(null);
+    setShowToolColorPicker(false);
+    setShowToolStyleDropdown(false);
+    setToolPanelPosition({ x: 0, y: 0 });
+  }, [selectedAsset]);
   const [selectedToolType, setSelectedToolType] = useState<string | null>(null); // Tipo de ferramenta selecionada para desenhar
   const [selectedToolForEdit, setSelectedToolForEdit] = useState<{ id: string; createdAt: number } | null>(null); // Ferramenta selecionada para edição
   const [showToolProperties, setShowToolProperties] = useState(false); // Mostrar painel de propriedades
@@ -592,18 +628,19 @@ const TradingPage: React.FC = () => {
   
   // Converter GraphicTool para formato do AnimatedCanvasChart
   const graphicToolsForChart = useMemo(() => {
-    const tools = activeTools
+    const tools = toolsForCurrentAsset
       .filter(tool => tool.visible && tool.points && tool.points.length > 0)
       .map(tool => ({
         id: `${tool.id}-${tool.createdAt}`,
         type: tool.type,
         color: tool.color,
         style: tool.style,
+        lineWidth: tool.lineWidth ?? defaultGraphicToolLineWidth(tool.type),
         visible: tool.visible,
         points: tool.points || []
       }));
     return tools;
-  }, [activeTools]);
+  }, [toolsForCurrentAsset]);
   
   // Converter activeIndicators para formato do AnimatedCanvasChart
   const indicatorsForChart = useMemo(() => {
@@ -620,7 +657,7 @@ const TradingPage: React.FC = () => {
   }, [activeIndicators]);
   
   // Handler quando uma ferramenta é completada
-  const handleToolComplete = (tool: { id: string; type: string; color: string; style: 'solid' | 'dashed' | 'dotted'; visible: boolean; points: Array<{ x: number; y: number; price?: number; time?: number }> }) => {
+  const handleToolComplete = (tool: { id: string; type: string; color: string; style: 'solid' | 'dashed' | 'dotted'; lineWidth?: number; visible: boolean; points: Array<{ x: number; y: number; price?: number; time?: number }> }) => {
     // Mapear tipo recebido para ID correto
     const typeToIdMap: Record<string, string> = {
       'line': 'line',
@@ -648,8 +685,10 @@ const TradingPage: React.FC = () => {
         icon: toolConfig.icon,
         color: tool.color,
         style: tool.style,
+        lineWidth: tool.lineWidth ?? defaultGraphicToolLineWidth(toolConfig.type),
         visible: true,
         createdAt: Date.now(),
+        symbol: selectedAsset,
         type: toolConfig.type,
         points: tool.points,
         isDrawing: false
@@ -664,7 +703,7 @@ const TradingPage: React.FC = () => {
   // Handler quando clica em uma ferramenta no gráfico
   const handleToolClick = (toolId: string, toolType: string, position: { x: number; y: number }) => {
     // Usar ref para garantir que sempre temos o valor mais recente
-    const currentActiveTools = activeToolsRef.current;
+    const currentActiveTools = activeToolsRef.current.filter((t) => t.symbol === selectedAsset);
     
     // O toolId vem como "horizontal-line-1767658924537" (id-createdAt)
     // Encontrar a ferramenta pelo ID completo
@@ -769,33 +808,6 @@ const TradingPage: React.FC = () => {
     };
   }, []);
 
-  // Função para animar mudanças de saldo (Counter)
-  const animateBalance = (from: number, to: number) => {
-    const duration = 500; // 500ms de animação
-    const startTime = performance.now();
-    const difference = to - from;
-    
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      
-      // Easing function (ease-out)
-      const easeOut = 1 - Math.pow(1 - progress, 3);
-      const currentBalance = from + (difference * easeOut);
-      
-      updateBalance(currentBalance);
-      
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      } else {
-        // Garantir valor final exato
-        updateBalance(to);
-      }
-    };
-    
-    requestAnimationFrame(animate);
-  };
-
   // Função processTradeResult — gráfico + IMA definem resultado; saldo atualiza na hora
   const processTradeResult = async (trade: Trade) => {
     if (processedTradeIdsRef.current.has(trade.id)) {
@@ -850,23 +862,29 @@ const TradingPage: React.FC = () => {
     setLocalActiveTrades(prev => prev.map(t => t.id === trade.id ? updatedTrade : t));
     localActiveTradesRef.current = localActiveTradesRef.current.map(t => t.id === trade.id ? updatedTrade : t);
 
+    const tradeAccount =
+      trade.accountType ?? getTradeAccountType(trade.id) ?? accountTypeRef.current;
+    const showUiForCurrentAccount = tradeAccount === accountTypeRef.current;
+
     if (user && balanceDeltaAtClose !== 0) {
-      const currentBalance = activeBalanceRef.current;
-      animateBalance(currentBalance, currentBalance + balanceDeltaAtClose);
+      applyBalanceDelta(balanceDeltaAtClose, tradeAccount);
+    }
+    if (!trade.accountType && tradeAccount) {
+      clearTradeAccountType(trade.id);
     }
 
-    if (!isDraw && result) {
+    if (!isDraw && result && showUiForCurrentAccount) {
       setTradeResults(prev => ({
         ...prev,
         [trade.symbol]: { result, profit, timestamp: Date.now() },
       }));
     }
 
-    if (!isDraw) {
+    if (!isDraw && showUiForCurrentAccount) {
       if (isWin) playWin();
       else playLoss();
 
-      const profitDisplay = isWin ? trade.amount * (payoutPercent / 100) : trade.amount;
+      const profitDisplay = Math.abs(profit);
       toast.custom((t) => (
         <div
           className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto overflow-hidden`}
@@ -977,7 +995,7 @@ const TradingPage: React.FC = () => {
 
   // Tick a cada 500ms para atualizar timers circulares nos cards de ativos + limpeza de resultados expirados
   useEffect(() => {
-    const hasActiveTrades = localActiveTrades.some(t => !t.result && t.expiration > Date.now());
+    const hasActiveTrades = tradesForCurrentAccount.some(t => !t.result && t.expiration > Date.now());
     const hasResults = Object.keys(tradeResults).length > 0;
     if (!hasActiveTrades && !hasResults) return;
     
@@ -998,7 +1016,7 @@ const TradingPage: React.FC = () => {
       });
     }, 500);
     return () => clearInterval(interval);
-  }, [localActiveTrades, tradeResults]);
+  }, [tradesForCurrentAccount, tradeResults]);
 
   // Salvar addedPairs no localStorage sempre que mudar
   useEffect(() => {
@@ -1197,11 +1215,13 @@ const TradingPage: React.FC = () => {
 
         // Depósitos recém-confirmados pelo HorsePay neste ciclo — mostrar toast
         if (result.updated && result.updated.length > 0) {
+          let shouldRefreshBalance = false;
           for (const deposit of result.updated) {
             if (processedDepositIds.has(deposit.id)) continue;
 
             const depositAmount = parseFloat(deposit.amount.toString());
             setProcessedDepositIds(prev => new Set(prev).add(deposit.id));
+            shouldRefreshBalance = true;
 
             toast.custom((t) => (
               <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
@@ -1218,7 +1238,7 @@ const TradingPage: React.FC = () => {
               </div>
             ), { duration: 5000, position: 'top-right' });
 
-            if (showPixPaymentModal && pixPaymentData && 
+            if (showPixPaymentModal && pixPaymentData &&
                 (pixPaymentData.depositId === deposit.id)) {
               // Verificar se há próxima parcela
               if (pixPaymentData.allOrders && pixPaymentData.currentPart && pixPaymentData.totalParts && 
@@ -1251,6 +1271,9 @@ const TradingPage: React.FC = () => {
                 }, 5000);
               }
             }
+          }
+          if (shouldRefreshBalance) {
+            await refreshBalancesFromDB();
           }
         }
 
@@ -1308,7 +1331,7 @@ const TradingPage: React.FC = () => {
     const interval = setInterval(checkDepositStatus, 5000);
 
     return () => clearInterval(interval);
-  }, [user, supabase, processedDepositIds, showPixPaymentModal, pixPaymentData]);
+  }, [user, supabase, processedDepositIds, showPixPaymentModal, pixPaymentData, refreshBalancesFromDB]);
 
   // Função para agrupar gateways por categoria
   const groupGatewaysByCategory = (gateways: any[]) => {
@@ -1884,7 +1907,7 @@ const TradingPage: React.FC = () => {
             <div className="flex items-center space-x-2 overflow-x-auto overflow-y-visible pb-2 scrollbar-hide">
               {assets.map((asset) => {
                 // Verificar se há trade ativo neste ativo
-                const assetActiveTrade = localActiveTrades.find(
+                const assetActiveTrade = tradesForCurrentAccount.find(
                   t => t.symbol === asset.symbol && !t.result && t.expiration > Date.now()
                 );
                 // Verificar se há resultado recente neste ativo
@@ -2210,7 +2233,7 @@ const TradingPage: React.FC = () => {
         {isMobile && !isLandscape && (
         <div className={`flex items-center space-x-1.5 overflow-x-auto scrollbar-hide ${isLandscape ? 'mt-0.5 pb-0.5' : 'mt-1 pb-1'} px-0.5`}>
           {assets.map((asset) => {
-            const assetActiveTrade = localActiveTrades.find(
+            const assetActiveTrade = tradesForCurrentAccount.find(
               t => t.symbol === asset.symbol && !t.result && t.expiration > Date.now()
             );
             const assetResult = tradeResults[asset.symbol];
@@ -3439,9 +3462,9 @@ const TradingPage: React.FC = () => {
                   title="Ferramentas de Desenho"
                 >
                   <PenTool className="w-4 h-4" />
-                  {activeTools.length > 0 && (
+                  {toolsForCurrentAsset.length > 0 && (
                     <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-[8px] px-1 py-0.5 rounded-full min-w-[14px] text-center">
-                      {activeTools.length}
+                      {toolsForCurrentAsset.length}
                     </span>
                   )}
                   <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2 py-1 bg-[#111827] border border-gray-700/80 rounded text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-[70]">
@@ -3478,7 +3501,7 @@ const TradingPage: React.FC = () => {
                             { icon: Layers, label: 'Linhas Fibonacci', id: 'fibonacci', color: '#3b82f6', style: 'solid' as const }
                           ].map((tool, idx) => {
                             const Icon = tool.icon;
-                            const isActive = activeTools.some(t => t.id === tool.id);
+                            const isActive = toolsForCurrentAsset.some(t => t.id === tool.id);
                             return (
                               <React.Fragment key={tool.id}>
                                 <button 
@@ -3518,12 +3541,12 @@ const TradingPage: React.FC = () => {
                       {/* Coluna 2: Ferramentas ativas/em uso */}
                       <div className="w-1/2 flex flex-col">
                         <div className="p-2 space-y-0 overflow-y-auto flex-1">
-                          {activeTools.length === 0 ? (
+                          {toolsForCurrentAsset.length === 0 ? (
                             <div className="px-3 py-4 text-xs text-gray-500 text-center">
                               Nenhuma ferramenta em uso
                             </div>
                           ) : (
-                            activeTools.map((tool, idx) => {
+                            toolsForCurrentAsset.map((tool, idx) => {
                               const getIcon = () => {
                                 switch (tool.id) {
                                   case 'line':
@@ -3623,7 +3646,7 @@ const TradingPage: React.FC = () => {
                                       </button>
                                     </div>
                                   </div>
-                                  {idx < activeTools.length - 1 && <div className="h-px bg-gray-700/30"></div>}
+                                  {idx < toolsForCurrentAsset.length - 1 && <div className="h-px bg-gray-700/30"></div>}
                                 </React.Fragment>
                               );
                             })
@@ -3882,7 +3905,7 @@ const TradingPage: React.FC = () => {
               <div className="relative w-full h-full" data-chart-container style={{ height: '100%', width: '100%', position: leftPanelOpen && leftPanelWidth > 0 ? 'absolute' : 'relative', top: leftPanelOpen && leftPanelWidth > 0 ? '0' : 'auto', paddingBottom: leftPanelOpen && leftPanelWidth > 0 ? '1.5rem' : '0' }}>
                 <AnimatedCanvasChart
                           ref={chartRef}
-                  key={`${selectedAsset}-${selectedTimeframe}-${chartType}-canvas-${chartReloadKey}`}
+                  key={`${selectedTimeframe}-${chartType}-canvas`}
                   symbol={selectedAsset}
                   timeframe={selectedTimeframe}
                   className="absolute inset-0"
@@ -3896,7 +3919,13 @@ const TradingPage: React.FC = () => {
                   lineWithShadow={lineWithShadow}
                   graphicTools={graphicToolsForChart}
                   selectedToolType={selectedToolType}
-                  selectedToolId={selectedToolOnChart ? `${selectedToolOnChart.id}-${selectedToolOnChart.createdAt}` : null}
+                  selectedToolId={
+                    selectedToolOnChart
+                      ? `${selectedToolOnChart.id}-${selectedToolOnChart.createdAt}`
+                      : selectedToolForEdit
+                        ? `${selectedToolForEdit.id}-${selectedToolForEdit.createdAt}`
+                        : null
+                  }
                   onToolDrawing={handleToolDrawing}
                           expirationTime={expirationTime}
                           currentTime={currentTime}
@@ -3908,7 +3937,7 @@ const TradingPage: React.FC = () => {
                           buyButtonHover={buyButtonHover}
                           sellButtonHover={sellButtonHover}
                   activeTrades={(() => {
-                    const filtered = localActiveTrades
+                    const filtered = tradesForCurrentAccount
                       .filter(t => t.symbol === selectedAsset && !closedSnapshots.has(t.id));
                     return filtered.map(t => ({
                       id: t.id,
@@ -4149,7 +4178,7 @@ const TradingPage: React.FC = () => {
                 
                 {/* Painel de Propriedades da Ferramenta - Sobre o gráfico (formato da imagem) */}
                 {(showToolProperties || selectedToolOnChart) && (() => {
-                  const tool = activeTools.find(t => 
+                  const tool = toolsForCurrentAsset.find(t => 
                     (selectedToolForEdit && t.id === selectedToolForEdit.id && t.createdAt === selectedToolForEdit.createdAt) ||
                     (selectedToolOnChart && t.id === selectedToolOnChart.id && t.createdAt === selectedToolOnChart.createdAt)
                   );
@@ -4191,12 +4220,14 @@ const TradingPage: React.FC = () => {
                   
                   // Calcular posição inicial se ainda não foi definida
                   const panelStyle = toolPanelPosition.x === 0 && toolPanelPosition.y === 0
-                    ? { top: '1rem', right: '1rem' }
+                    ? isMobile
+                      ? { left: '0.5rem', bottom: `${mobileTradePanelHeight + 12}px`, top: 'auto' as const, right: 'auto' as const }
+                      : { top: '1rem', right: '1rem' }
                     : { left: `${toolPanelPosition.x}px`, top: `${toolPanelPosition.y}px` };
                   
                   return (
                     <div 
-                      className="absolute bg-[#111827] shadow-xl z-[70] overflow-visible select-none"
+                      className="absolute bg-[#111827] shadow-xl z-[70] overflow-visible select-none touch-manipulation"
                       style={{
                         ...panelStyle,
                         borderRadius: '4px', // Cantos mais quadrados
@@ -4206,7 +4237,7 @@ const TradingPage: React.FC = () => {
                     >
                       {/* Linha de ícones horizontais */}
                       <div 
-                        className="flex items-center gap-2 px-3 py-2 bg-black"
+                        className={`flex items-center bg-black ${isMobile ? 'gap-1 px-2 py-2.5 flex-wrap max-w-[calc(100vw-1rem)]' : 'gap-2 px-3 py-2'}`}
                         style={{ cursor: isDraggingToolPanel ? 'grabbing' : 'grab' }}
                         onMouseDown={(e) => {
                           // Permitir drag apenas na área do header (não nos botões)
@@ -4225,7 +4256,8 @@ const TradingPage: React.FC = () => {
                               setShowToolColorPicker(!showToolColorPicker);
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
-                            className="w-6 h-6 rounded border border-gray-700/50 cursor-pointer transition-all hover:scale-105"
+                            onTouchStart={(e) => e.stopPropagation()}
+                            className={`rounded border border-gray-700/50 cursor-pointer transition-all hover:scale-105 touch-manipulation ${isMobile ? 'w-9 h-9' : 'w-6 h-6'}`}
                             style={{ 
                               backgroundColor: tool.color,
                               boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)'
@@ -4279,7 +4311,8 @@ const TradingPage: React.FC = () => {
                               e.stopPropagation();
                               e.preventDefault();
                             }}
-                            className="p-1 hover:bg-gray-800/50 rounded transition-colors relative flex items-center justify-center"
+                            onTouchStart={(e) => e.stopPropagation()}
+                            className={`hover:bg-gray-800/50 rounded transition-colors relative flex items-center justify-center touch-manipulation ${isMobile ? 'p-2 min-w-[36px] min-h-[36px]' : 'p-1'}`}
                             title="Estilo da linha"
                           >
                             {/* Ícone visual representando o estilo da linha */}
@@ -4362,6 +4395,52 @@ const TradingPage: React.FC = () => {
                             </div>
                           )}
                         </div>
+
+                        {(tool.type === 'line' || tool.type === 'trendline') && (
+                          <div className={`flex items-center gap-0.5 border border-gray-700/50 rounded overflow-hidden ${isMobile ? 'min-h-[36px]' : ''}`}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTools(activeTools.map(t =>
+                                  t.id === tool.id && t.createdAt === tool.createdAt
+                                    ? {
+                                        ...t,
+                                        lineWidth: Math.max(0.5, (t.lineWidth ?? defaultGraphicToolLineWidth(t.type)) - 0.5),
+                                      }
+                                    : t
+                                ));
+                              }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onTouchStart={(e) => e.stopPropagation()}
+                              className={`hover:bg-gray-800/50 transition-colors touch-manipulation flex items-center justify-center ${isMobile ? 'p-2 min-w-[36px] min-h-[36px]' : 'p-1'}`}
+                              title="Diminuir espessura"
+                            >
+                              <Minus className={`text-gray-400 ${isMobile ? 'w-4 h-4' : 'w-3 h-3'}`} />
+                            </button>
+                            <span className={`text-gray-400 min-w-[28px] text-center tabular-nums ${isMobile ? 'text-xs' : 'text-[10px]'}`}>
+                              {(tool.lineWidth ?? defaultGraphicToolLineWidth(tool.type)).toFixed(1)}
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTools(activeTools.map(t =>
+                                  t.id === tool.id && t.createdAt === tool.createdAt
+                                    ? {
+                                        ...t,
+                                        lineWidth: Math.min(5, (t.lineWidth ?? defaultGraphicToolLineWidth(t.type)) + 0.5),
+                                      }
+                                    : t
+                                ));
+                              }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onTouchStart={(e) => e.stopPropagation()}
+                              className={`hover:bg-gray-800/50 transition-colors touch-manipulation flex items-center justify-center ${isMobile ? 'p-2 min-w-[36px] min-h-[36px]' : 'p-1'}`}
+                              title="Aumentar espessura"
+                            >
+                              <Plus className={`text-gray-400 ${isMobile ? 'w-4 h-4' : 'w-3 h-3'}`} />
+                            </button>
+                          </div>
+                        )}
                         
                         {/* Quadrados sobrepostos (duplicar) */}
                         <button
@@ -4433,7 +4512,7 @@ const TradingPage: React.FC = () => {
                             // Para linhas horizontais, garantir que o price seja preservado corretamente
                             const duplicatedTool: GraphicTool = {
                               ...tool,
-                              id: tool.id, // Manter ID original
+                              symbol: selectedAsset,
                               createdAt: Date.now(), // Novo timestamp para garantir unicidade
                               visible: tool.visible !== undefined ? tool.visible : true, // Garantir que visible seja true por padrão
                               points: tool.points?.map((p, index) => {

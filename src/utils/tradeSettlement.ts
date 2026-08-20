@@ -18,9 +18,14 @@ export interface TradeSettlementResult {
   isDraw: boolean;
   isWin: boolean;
   result: 'win' | 'loss' | null;
+  /** Lucro/prejuízo líquido da operação (win: +90% do stake; loss: -stake) */
   profit: number;
-  /** Ajuste no saldo ao fechar (após débito na abertura) */
+  /** Valor bruto creditado/debitado no fechamento (win: stake+payout; loss: 0 após débito na abertura) */
   balanceDeltaAtClose: number;
+  /** Retorno bruto em caso de vitória (ex.: R$ 190 para stake R$ 100 @ 90%) */
+  grossWinReturn: number;
+  /** Perda total da operação incluindo stake já debitado na abertura (ex.: R$ 100) */
+  grossLossAmount: number;
 }
 
 /** Offset de fechamento IMA — levemente acima/abaixo da entrada (menos óbvio que colar na linha) */
@@ -234,6 +239,7 @@ export function settleTrade(input: TradeSettlementInput): TradeSettlementResult 
   const isWin = isDraw ? false : type === 'call' ? priceDiff > 0 : priceDiff < 0;
 
   const profitAmount = amount * (payoutPercent / 100);
+  const grossWinReturn = amount + profitAmount;
 
   if (isDraw) {
     return {
@@ -243,6 +249,8 @@ export function settleTrade(input: TradeSettlementInput): TradeSettlementResult 
       result: null,
       profit: 0,
       balanceDeltaAtClose: amount,
+      grossWinReturn,
+      grossLossAmount: 0,
     };
   }
 
@@ -253,7 +261,9 @@ export function settleTrade(input: TradeSettlementInput): TradeSettlementResult 
       isWin: true,
       result: 'win',
       profit: profitAmount,
-      balanceDeltaAtClose: amount + profitAmount,
+      balanceDeltaAtClose: grossWinReturn,
+      grossWinReturn,
+      grossLossAmount: 0,
     };
   }
 
@@ -263,6 +273,9 @@ export function settleTrade(input: TradeSettlementInput): TradeSettlementResult 
     isWin: false,
     result: 'loss',
     profit: -amount,
+    // Stake já debitado na abertura — nada a abater de novo no fechamento
     balanceDeltaAtClose: 0,
+    grossWinReturn,
+    grossLossAmount: amount,
   };
 }

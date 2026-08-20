@@ -11,7 +11,7 @@ interface PortfolioTotalProps {
 }
 
 export const PortfolioTotal: React.FC<PortfolioTotalProps> = ({ onClose }) => {
-  const { user } = useAuth();
+  const { user, accountType } = useAuth();
   const [positions, setPositions] = useState<OpenPosition[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -21,13 +21,13 @@ export const PortfolioTotal: React.FC<PortfolioTotalProps> = ({ onClose }) => {
       const interval = setInterval(loadPositions, 3000);
       return () => clearInterval(interval);
     }
-  }, [user]);
+  }, [user, accountType]);
 
   const loadPositions = async () => {
     if (!user) return;
-    
+
     try {
-      const data = await getOpenPositions(user.id);
+      const data = await getOpenPositions(user.id, accountType);
       setPositions(data);
     } catch (error) {
       logger.error('Erro ao carregar posições:', error);

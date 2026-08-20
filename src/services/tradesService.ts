@@ -6,6 +6,9 @@ import { logger } from '@/utils/logger';
  * Serviço para gerenciar operações de trading
  */
 
+import type { AccountType } from '@/types';
+import { resolveTradeAccountType, isTradeForAccount } from '@/lib/tradeAccountStorage';
+
 export interface Trade {
   id: string;
   userId: string;
@@ -17,6 +20,7 @@ export interface Trade {
   exitPrice: number | null;
   result: 'win' | 'loss' | null;
   profit: number | null;
+  accountType?: AccountType;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,12 +34,16 @@ export interface OpenPosition {
   expiration: number;
   expiryTime: Date;
   createdAt: string;
+  accountType?: AccountType;
 }
 
 /**
  * Busca ordens abertas (posições pendentes) do usuário
  */
-export async function getOpenPositions(userId: string): Promise<OpenPosition[]> {
+export async function getOpenPositions(
+  userId: string,
+  accountType?: AccountType,
+): Promise<OpenPosition[]> {
   if (!supabase) {
     // Modo local - retornar dados fictícios
     return [];
@@ -54,16 +62,21 @@ export async function getOpenPositions(userId: string): Promise<OpenPosition[]> 
       return [];
     }
 
-    return (data || []).map(trade => ({
-      id: trade.id,
-      symbol: trade.symbol,
-      type: trade.type,
-      amount: trade.amount,
-      entryPrice: trade.entry_price,
-      expiration: trade.expiration,
-      expiryTime: new Date(trade.expiration * 1000), // expiration é timestamp Unix em segundos
-      createdAt: trade.created_at,
-    }));
+    return (data || [])
+      .map((trade) => ({
+        id: trade.id,
+        symbol: trade.symbol,
+        type: trade.type,
+        amount: trade.amount,
+        entryPrice: trade.entry_price,
+        expiration: trade.expiration,
+        expiryTime: new Date(trade.expiration * 1000),
+        createdAt: trade.created_at,
+        accountType: trade.account_type === 'demo' ? 'demo' as const : 'real' as const,
+      }))
+      .filter((trade) =>
+        accountType ? isTradeForAccount(trade, accountType) : true,
+      );
   } catch (error) {
     logger.error('Erro ao buscar posições abertas:', error);
     return [];
@@ -75,7 +88,8 @@ export async function getOpenPositions(userId: string): Promise<OpenPosition[]> 
  */
 export async function getTradeHistory(
   userId: string,
-  limit: number = 50
+  limit: number = 50,
+  accountType?: AccountType,
 ): Promise<Trade[]> {
   if (!supabase) {
     // Modo local - retornar dados fictícios
@@ -96,20 +110,26 @@ export async function getTradeHistory(
       return [];
     }
 
-    return (data || []).map(trade => ({
-      id: trade.id,
-      userId: trade.user_id,
-      symbol: trade.symbol,
-      type: trade.type,
-      amount: trade.amount,
-      expiration: trade.expiration,
-      entryPrice: trade.entry_price,
-      exitPrice: trade.exit_price,
-      result: trade.result,
-      profit: trade.profit,
-      createdAt: trade.created_at,
-      updatedAt: trade.updated_at,
-    }));
+    return (data || [])
+      .map((trade) => ({
+        id: trade.id,
+        userId: trade.user_id,
+        symbol: trade.symbol,
+        type: trade.type,
+        amount: trade.amount,
+        expiration: trade.expiration,
+        entryPrice: trade.entry_price,
+        exitPrice: trade.exit_price,
+        result: trade.result,
+        profit: trade.profit,
+        accountType: trade.account_type === 'demo' ? 'demo' as const : 'real' as const,
+        createdAt: trade.created_at,
+        updatedAt: trade.updated_at,
+      }))
+      .filter((trade) =>
+        accountType ? isTradeForAccount(trade, accountType) : true,
+      )
+      .slice(0, limit);
   } catch (error) {
     logger.error('Erro ao buscar histórico:', error);
     return [];

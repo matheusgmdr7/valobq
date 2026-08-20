@@ -33,6 +33,7 @@ export interface UseRealtimeStreamOptions {
 }
 
 export interface MarketStatusInfo {
+  symbol: string;
   isOpen: boolean;
   isOTC: boolean;
   category: string;
@@ -150,6 +151,7 @@ export function useRealtimeStream(options: UseRealtimeStreamOptions): UseRealtim
           // Processar status do mercado (real vs OTC)
           if (message.type === 'market-status') {
             const status: MarketStatusInfo = {
+              symbol: message.symbol || symbolRef.current,
               isOpen: message.isOpen,
               isOTC: message.isOTC,
               category: message.category,

@@ -57,7 +57,7 @@ interface TradeHistoryProps {
 }
 
 export const TradeHistory: React.FC<TradeHistoryProps> = ({ onClose, trades: externalTrades }) => {
-  const { user } = useAuth();
+  const { user, accountType } = useAuth();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
@@ -93,14 +93,14 @@ export const TradeHistory: React.FC<TradeHistoryProps> = ({ onClose, trades: ext
     
     setLoading(true);
     try {
-      const data = await getTradeHistory(user.id, 50);
+      const data = await getTradeHistory(user.id, 50, accountType);
       setTrades(data);
     } catch (error) {
       logger.error('Erro ao carregar histórico:', error);
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, accountType]);
 
   useEffect(() => {
     if (externalTrades && externalTrades.length > 0) {
@@ -113,7 +113,7 @@ export const TradeHistory: React.FC<TradeHistoryProps> = ({ onClose, trades: ext
     if (user && !externalTrades) {
       loadHistory();
     }
-  }, [user, externalTrades, loadHistory]);
+  }, [user, accountType, externalTrades, loadHistory]);
 
   // Filtrar por categoria de ativo
   const filteredTrades = useMemo(() => {
@@ -232,7 +232,7 @@ export const TradeHistory: React.FC<TradeHistoryProps> = ({ onClose, trades: ext
                       <span className={`text-[11px] font-bold leading-tight ${
                         isWin ? 'text-green-400' : isLoss ? 'text-red-400' : 'text-gray-400'
                       }`}>
-                        {isWin ? '+' : ''}{formatCurrency(profitValue)}
+                        {isWin ? '+' : isLoss ? '-' : ''}{formatCurrency(Math.abs(profitValue))}
                       </span>
                       <span className={`text-[9px] leading-tight ${
                         isWin ? 'text-green-500/70' : isLoss ? 'text-red-500/70' : 'text-gray-500'

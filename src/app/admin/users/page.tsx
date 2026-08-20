@@ -151,7 +151,19 @@ export default function UsersPage() {
     try {
       if (!supabase) { toast.error('Banco de dados não configurado'); return; }
       const adjustment = balanceAdjustment.type === 'credit' ? balanceAdjustment.amount : -balanceAdjustment.amount;
-      const { error } = await supabase.from('users').update({ balance: selectedUser.balance + adjustment }).eq('id', selectedUser.id);
+      const { data: userData, error: fetchError } = await supabase
+        .from('users')
+        .select('balance')
+        .eq('id', selectedUser.id)
+        .single();
+      if (fetchError || !userData) throw fetchError ?? new Error('Usuário não encontrado');
+
+      const currentBalance = parseFloat(userData.balance?.toString() || '0');
+      const newBalance = Math.round((currentBalance + adjustment) * 100) / 100;
+      const { error } = await supabase
+        .from('users')
+        .update({ balance: newBalance, updated_at: new Date().toISOString() })
+        .eq('id', selectedUser.id);
       if (error) throw error;
       await supabase.from('transactions').insert([{ user_id: selectedUser.id, type: balanceAdjustment.type === 'credit' ? 'deposit' : 'withdrawal', amount: Math.abs(adjustment), method: 'manual_adjustment', status: 'completed' }]);
       toast.success('Saldo ajustado com sucesso!');

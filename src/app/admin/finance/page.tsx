@@ -186,9 +186,23 @@ export default function FinancePage() {
         if (balanceError) throw balanceError;
         toast.success('Saque aprovado e saldo atualizado!');
       } else {
-        const { error } = await supabase.from('deposits').update({ status: 'approved', approved_at: new Date().toISOString() }).eq('id', id);
-        if (error) throw error;
-        toast.success('Depósito aprovado!');
+        const savedUserStr = typeof window !== 'undefined' ? localStorage.getItem('user_data') : null;
+        const adminId = savedUserStr ? JSON.parse(savedUserStr).id : null;
+
+        const res = await fetch('/api/admin/deposits/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deposit_id: id, admin_id: adminId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Erro ao aprovar depósito');
+
+        toast.success(
+          data.alreadyProcessed
+            ? 'Depósito já estava aprovado (crédito não duplicado)'
+            : 'Depósito aprovado e saldo creditado!',
+        );
       }
       loadData();
       loadSummary();
