@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { approveDepositAndCreditBalance } from '@/lib/depositApproval';
+import {
+  decodeGatewayCredentials,
+  parseWebhookForGateway,
+  verifyWebhookForGateway,
+  type PaymentGatewayRow,
+} from '@/lib/paymentGateways';
 
 function getAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://tgrhgkqpqsnkhewnmarr.supabase.co';
@@ -16,43 +22,74 @@ function getAdminSupabase() {
   });
 }
 
+async function findDepositByTransactionId(supabase: ReturnType<typeof getAdminSupabase>, externalId: string) {
+  const { data, error } = await supabase
+    .from('deposits')
+    .select('id, user_id, amount, status')
+    .eq('transaction_id', externalId)
+    .single();
+
+  if (!error && data) return data;
+
+  const { data: byNotes } = await supabase
+    .from('deposits')
+    .select('id, user_id, amount, status')
+    .ilike('admin_notes', `%${externalId}%`)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return byNotes;
+}
+
 /**
- * Webhook endpoint para receber callbacks do HorsePay
- * POST /api/deposits/callback
+ * Webhook endpoint genérico para callbacks de pagamento PIX
+ * POST /api/deposits/callback?webhookSecret=...
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const rawBody = await request.text();
+    let body: Record<string, unknown>;
 
-    const externalId = body.external_id || body.id || body.transaction_id || body.order_id || null;
-    const rawStatus = (
-      body.status?.toString() ||
-      body.payment_status?.toString() ||
-      body.status_pagamento?.toString() ||
-      ''
-    ).toLowerCase().trim();
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
 
+    const supabase = getAdminSupabase();
+
+    const { data: gateways } = await supabase
+      .from('payment_gateways')
+      .select('*')
+      .eq('type', 'pix')
+      .eq('is_active', true);
+
+    const activeGateways = (gateways || []) as PaymentGatewayRow[];
+    if (activeGateways.length === 0) {
+      return NextResponse.json({ error: 'No active gateway' }, { status: 503 });
+    }
+
+    const gateway =
+      activeGateways.find((g) => verifyWebhookForGateway(g, rawBody, request.nextUrl.searchParams, request.headers)) ||
+      activeGateways[0];
+
+    if (!verifyWebhookForGateway(gateway, rawBody, request.nextUrl.searchParams, request.headers)) {
+      console.warn('[Webhook] Falha na validação de segurança');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const parsed = parseWebhookForGateway(gateway, body);
+    const creds = decodeGatewayCredentials(gateway);
+
+    const externalId = parsed.externalId;
     if (!externalId) {
       return NextResponse.json({ error: 'Missing transaction ID' }, { status: 400 });
     }
 
-    const isCompleted = [
-      'concluida', 'completed', 'paid', 'pago', 'approved', 'settled', 'confirmed', 'success',
-    ].includes(rawStatus) || body.status === 1;
-
-    const isRejected = [
-      'rejected', 'failed', 'cancelled', 'canceled', 'expired', 'recusada', 'expirada',
-    ].includes(rawStatus);
-
-    const supabase = getAdminSupabase();
-
-    const { data: deposit, error: fetchError } = await supabase
-      .from('deposits')
-      .select('id, user_id, amount, status')
-      .eq('transaction_id', externalId.toString())
-      .single();
-
-    if (fetchError || !deposit) {
+    const deposit = await findDepositByTransactionId(supabase, externalId.toString());
+    if (!deposit) {
       return NextResponse.json({ error: 'Deposit not found', external_id: externalId }, { status: 404 });
     }
 
@@ -60,10 +97,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Already processed', deposit_id: deposit.id });
     }
 
-    if (isCompleted && deposit.status === 'pending') {
+    if (parsed.status === 'completed' && deposit.status === 'pending') {
       const result = await approveDepositAndCreditBalance(supabase, deposit.id, {
         source: 'webhook',
-        notes: `Aprovado via webhook. Status: "${rawStatus}". Transaction: ${externalId}. Data: ${new Date().toISOString()}`,
+        notes: `Aprovado via webhook (${creds.provider}/${parsed.event}). Status: "${parsed.rawStatus}". Transaction: ${externalId}. Data: ${new Date().toISOString()}`,
       });
 
       if (!result.ok && !result.alreadyProcessed) {
@@ -76,12 +113,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (isRejected && deposit.status === 'pending') {
+    if (parsed.status === 'rejected' && deposit.status === 'pending') {
       await supabase
         .from('deposits')
         .update({
           status: 'rejected',
-          admin_notes: `Rejeitado via webhook. Status: "${rawStatus}". Transaction: ${externalId}. Data: ${new Date().toISOString()}`,
+          admin_notes: `Rejeitado via webhook (${creds.provider}/${parsed.event}). Status: "${parsed.rawStatus}". Transaction: ${externalId}. Data: ${new Date().toISOString()}`,
           updated_at: new Date().toISOString(),
         })
         .eq('id', deposit.id)
@@ -92,7 +129,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       message: 'Status noted',
-      status_received: rawStatus,
+      status_received: parsed.rawStatus,
+      event: parsed.event,
       deposit_id: deposit.id,
     });
   } catch (error) {

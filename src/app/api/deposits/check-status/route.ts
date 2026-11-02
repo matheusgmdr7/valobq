@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { approveDepositAndCreditBalance } from '@/lib/depositApproval';
+import {
+  checkPixStatusForGateway,
+  isPaidStatusForGateway,
+  type PaymentGatewayRow,
+} from '@/lib/paymentGateways';
 
 function getAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://tgrhgkqpqsnkhewnmarr.supabase.co';
@@ -17,7 +22,7 @@ function getAdminSupabase() {
 }
 
 /**
- * Fallback de confirmação: consulta HorsePay quando o webhook demora.
+ * Fallback de confirmação: consulta o gateway quando o webhook demora.
  * POST /api/deposits/check-status
  */
 export async function POST(request: NextRequest) {
@@ -55,64 +60,30 @@ export async function POST(request: NextRequest) {
         .limit(1);
 
       if (gateways && gateways.length > 0) {
-        const gateway = gateways[0];
-        const clientKey = atob(gateway.api_key_encrypted);
-        const clientSecret = atob(gateway.api_secret_encrypted);
-        const gatewayConfig = gateway.config || {};
-        const apiBaseUrl = gatewayConfig.api_base_url || 'https://api.horsepay.io';
+        const gateway = gateways[0] as PaymentGatewayRow;
 
-        try {
-          const authRes = await fetch(`${apiBaseUrl}/auth/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ client_key: clientKey, client_secret: clientSecret }),
-          });
+        for (const deposit of pendingDeposits) {
+          if (!deposit.transaction_id) continue;
 
-          if (authRes.ok) {
-            const authData = await authRes.json();
-            const accessToken = authData.access_token;
+          try {
+            const result = await checkPixStatusForGateway(gateway, deposit.transaction_id);
+            if (!isPaidStatusForGateway(gateway, result.status)) continue;
 
-            for (const deposit of pendingDeposits) {
-              try {
-                const statusRes = await fetch(`${apiBaseUrl}/api/orders/deposit/${deposit.transaction_id}`, {
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json',
-                  },
-                });
+            const approval = await approveDepositAndCreditBalance(supabase, deposit.id, {
+              source: 'check-status',
+              notes: `Aprovado via check-status. Status: "${result.status}". Data: ${new Date().toISOString()}`,
+            });
 
-                if (!statusRes.ok) continue;
-
-                const txData = await statusRes.json();
-                const rawStatus = (txData.status?.toString() || '').toLowerCase().trim();
-                const isCompleted =
-                  rawStatus === 'paid' ||
-                  rawStatus === 'success' ||
-                  rawStatus === 'completed' ||
-                  rawStatus === 'confirmed' ||
-                  rawStatus === 'approved';
-
-                if (!isCompleted) continue;
-
-                const result = await approveDepositAndCreditBalance(supabase, deposit.id, {
-                  source: 'check-status',
-                  notes: `Aprovado via check-status. HorsePay status: "${rawStatus}". end_to_end: ${txData.end_to_end || 'N/A'}. Data: ${new Date().toISOString()}`,
-                });
-
-                if (result.ok && !result.alreadyProcessed) {
-                  updated.push({
-                    id: deposit.id,
-                    status: 'approved',
-                    amount: parseFloat(deposit.amount.toString()),
-                  });
-                }
-              } catch {
-                continue;
-              }
+            if (approval.ok && !approval.alreadyProcessed) {
+              updated.push({
+                id: deposit.id,
+                status: 'approved',
+                amount: parseFloat(deposit.amount.toString()),
+              });
             }
+          } catch {
+            continue;
           }
-        } catch {
-          // Falha na autenticação HorsePay — webhook ou próximo ciclo de polling
         }
       }
     }

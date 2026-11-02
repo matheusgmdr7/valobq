@@ -1197,7 +1197,7 @@ const TradingPage: React.FC = () => {
   }, [processedDepositIds]);
 
   // Verificar periodicamente status de depósitos via API server-side
-  // O server consulta HorsePay (GET /api/orders/deposit/{id}) e também verifica webhook
+  // Fallback: consulta o gateway ativo quando o webhook demora
   useEffect(() => {
     if (!user || !supabase) return;
 
@@ -1213,7 +1213,7 @@ const TradingPage: React.FC = () => {
 
         const result = await response.json();
 
-        // Depósitos recém-confirmados pelo HorsePay neste ciclo — mostrar toast
+        // Depósitos recém-confirmados neste ciclo — mostrar toast
         if (result.updated && result.updated.length > 0) {
           let shouldRefreshBalance = false;
           for (const deposit of result.updated) {
@@ -5245,16 +5245,16 @@ const TradingPage: React.FC = () => {
           />
           {/* Janela de Depósito */}
           <div 
-            className="fixed inset-0 flex items-center justify-center z-[60] p-4"
+            className="fixed inset-0 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div 
-              className="bg-black backdrop-blur-xl shadow-2xl overflow-hidden w-full max-w-5xl max-h-[90vh] md:max-h-[85vh] animate-[fadeIn_0.2s_ease-out_forwards] border border-gray-800/50 flex flex-col rounded overflow-y-auto"
+              className="bg-black backdrop-blur-xl shadow-2xl overflow-hidden w-full sm:max-w-lg md:max-w-2xl lg:max-w-5xl max-h-[92dvh] sm:max-h-[90vh] md:max-h-[85vh] animate-[fadeIn_0.2s_ease-out_forwards] border border-gray-800/50 flex flex-col rounded-t-2xl sm:rounded"
               onClick={(e) => e.stopPropagation()}
             >
             {/* Header */}
-            <div className="px-6 py-4 border-b border-gray-700/50 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center space-x-3">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-700/50 flex items-center justify-between flex-shrink-0 gap-2">
+              <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
                 {depositStep !== 'method' && (
                   <button
                     onClick={() => {
@@ -5265,12 +5265,12 @@ const TradingPage: React.FC = () => {
                         setSelectedGateway(null);
                       }
                     }}
-                    className="p-1 hover:bg-gray-800/50 rounded transition-colors"
+                    className="p-1 hover:bg-gray-800/50 rounded transition-colors flex-shrink-0"
                   >
                     <ChevronLeft className="w-5 h-5 text-gray-400" />
                   </button>
                 )}
-                <h2 className="text-lg font-semibold text-white">
+                <h2 className="text-base sm:text-lg font-semibold text-white truncate">
                   {depositStep === 'method' ? 'Payment method' : 
                    depositStep === 'amount' ? (selectedGateway?.description || selectedGateway?.name || 'PIX (Apenas seu CPF)') : 
                    'Payment Details'}
@@ -5298,7 +5298,7 @@ const TradingPage: React.FC = () => {
               {depositStep === 'method' && (
                 <>
                   {/* Lista de métodos */}
-                  <div className="p-6">
+                  <div className="p-4 sm:p-6">
                     {loadingGateways ? (
                       <div className="flex items-center justify-center py-12">
                         <div className="text-gray-400 text-sm">Carregando métodos de pagamento...</div>
@@ -5358,7 +5358,7 @@ const TradingPage: React.FC = () => {
 
               {/* Etapa 2: Seleção de Valor */}
               {depositStep === 'amount' && selectedGateway && (
-                <div className="p-6 space-y-6">
+                <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
                   {/* Campo de Valor */}
                   <div>
                     <label className="block text-sm text-gray-400 mb-2">Amount</label>
@@ -5374,21 +5374,21 @@ const TradingPage: React.FC = () => {
                       }}
                       min={selectedGateway.min_amount || 20}
                       max={1000}
-                      className="w-full px-4 py-3 bg-gray-800/50 border border-white/10 rounded text-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
+                      className="w-full px-4 py-3 bg-gray-800/50 border border-white/10 rounded text-base sm:text-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
                       placeholder="R$ 20,00"
                     />
                   </div>
 
                   {/* Botões de Valores Pré-definidos */}
                   <div>
-                    <div className="grid grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3">
                       {[20, 50, 100, 250, 500, 1000].map((amount) => {
                         if (amount < (selectedGateway.min_amount || 20)) return null;
                         return (
                           <button
                             key={amount}
                             onClick={() => setDepositAmount(amount)}
-                            className={`py-3 px-4 rounded-lg text-sm font-medium transition-all ${
+                            className={`py-2.5 sm:py-3 px-2 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                               depositAmount === amount
                                 ? 'bg-green-600 text-white shadow-lg'
                                 : 'bg-gray-800/50 text-white border border-gray-700/50 hover:bg-gray-800/70'
@@ -5403,24 +5403,24 @@ const TradingPage: React.FC = () => {
 
                   {/* Seção de Promoção */}
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-white font-bold text-sm">PROMOTION</span>
-                      <div className="flex items-center space-x-1 text-gray-400 text-xs">
+                      <div className="flex items-center space-x-1 text-gray-400 text-xs flex-shrink-0">
                         <Tag className="w-3 h-3" />
                         <span>View available (0)</span>
                       </div>
                     </div>
-                    <div className="flex space-x-3">
+                    <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
                       <input
                         type="text"
                         value={promoCode}
                         onChange={(e) => setPromoCode(e.target.value)}
                         placeholder="Enter your promo code"
-                        className="flex-1 px-4 py-2 bg-gray-800/50 border border-white/10 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
+                        className="w-full flex-1 px-4 py-2.5 sm:py-2 bg-gray-800/50 border border-white/10 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
                       />
                       <button
                         disabled={!promoCode}
-                        className={`px-6 py-2 rounded text-sm font-medium transition-all ${
+                        className={`w-full sm:w-auto sm:px-6 py-2.5 sm:py-2 rounded text-sm font-medium transition-all flex-shrink-0 ${
                           promoCode
                             ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                             : 'bg-gray-800/30 text-gray-500 cursor-not-allowed'
@@ -5435,7 +5435,7 @@ const TradingPage: React.FC = () => {
                   {/* Botão Continuar */}
                   <button
                     onClick={() => setDepositStep('payment')}
-                    className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+                    className="w-full py-3.5 sm:py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors text-base sm:text-sm"
                   >
                     Continue
                   </button>
@@ -5444,11 +5444,11 @@ const TradingPage: React.FC = () => {
 
               {/* Etapa 3: Detalhes do Pagamento */}
               {depositStep === 'payment' && selectedGateway && (
-                <div className="p-6 space-y-6">
+                <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
                   {/* Aviso Informativo */}
-                  <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-4 flex items-start space-x-3">
+                  <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-3 sm:p-4 flex items-start space-x-3">
                     <AlertCircle className="w-5 h-5 text-white flex-shrink-0 mt-0.5" />
-                    <p className="text-sm text-gray-300 leading-relaxed">
+                    <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
                       Our platform does not allow CNPJ, third-party CPF and/or third-party payment methods. 90% of payments are processed by the provider within 5 minutes.
                     </p>
                   </div>
@@ -5489,11 +5489,11 @@ const TradingPage: React.FC = () => {
                   </div>
 
                   {/* Logos de Segurança */}
-                  <div className="flex items-center justify-center pt-4 border-t border-gray-700/50">
+                  <div className="flex items-center justify-center pt-4 border-t border-gray-700/50 overflow-hidden">
                     <img 
                       src="https://tgrhgkqpqsnkhewnmarr.supabase.co/storage/v1/object/public/banks/payaments.png" 
                       alt="Payment Security Badges" 
-                      className="h-12 w-auto object-contain"
+                      className="h-10 sm:h-12 w-auto max-w-full object-contain"
                     />
                   </div>
 
@@ -5527,232 +5527,67 @@ const TradingPage: React.FC = () => {
                           </div>
                         ), { duration: 10000, position: 'top-right', id: 'deposit-processing' });
 
-                        // Buscar configurações completas do gateway
-                        const { data: gatewayData, error: gatewayError } = await supabase
-                          .from('payment_gateways')
-                          .select('*')
-                          .eq('id', selectedGateway.id)
-                          .single();
-
-                        if (gatewayError || !gatewayData) {
-                          toast.dismiss('deposit-processing');
-                          toast.custom((t) => (
-                            <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
-                              style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
-                              <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>Erro ao carregar configurações do gateway</p>
-                            </div>
-                          ), { duration: 3000, position: 'top-right' });
-                          return;
+                        if (!user.name || user.name.trim().length === 0) {
+                          throw new Error('Nome do usuário é obrigatório para realizar depósito');
                         }
 
-                        // Se o gateway é PIX (HorsePay), processar via API
-                        if (gatewayData.type === 'pix' && gatewayData.api_key_encrypted && gatewayData.api_secret_encrypted) {
-                          // Decodificar credenciais
-                          const clientKey = atob(gatewayData.api_key_encrypted);
-                          const clientSecret = atob(gatewayData.api_secret_encrypted);
-                          
-                          // Ler api_base_url e split_config do campo config (JSONB)
-                          const gatewayConfig = gatewayData.config || {};
-                          const apiBaseUrl = gatewayConfig.api_base_url || gatewayData.api_base_url || 'https://api.horsepay.io';
-                          const callbackUrl = gatewayData.webhook_url?.trim() || `${window.location.origin}/api/deposits/callback`;
-
-                          // 1. Autenticar na API HorsePay
-                          const authResponse = await fetch(`${apiBaseUrl}/auth/token`, {
+                        if (selectedGateway.type === 'pix') {
+                          const orderResponse = await fetch('/api/deposits/create-order', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                              client_key: clientKey,
-                              client_secret: clientSecret,
+                              gateway_id: selectedGateway.id,
+                              amount: depositAmount,
+                              user_id: user.id,
+                              user_name: user.name.trim(),
+                              user_email: user.email,
+                              user_phone: (user as any).phone,
+                              cpf,
+                              origin: window.location.origin,
                             }),
                           });
 
-                          if (!authResponse.ok) {
-                            let errorMessage = 'Erro ao autenticar na API';
-                            try {
-                              const authError = await authResponse.json();
-                              errorMessage = authError.message || authError.error || JSON.stringify(authError);
-                            } catch {
-                              const errorText = await authResponse.text();
-                              errorMessage = errorText || `Erro HTTP ${authResponse.status}: ${authResponse.statusText}`;
-                            }
-                            throw new Error(errorMessage);
-                          }
-
-                          const authData = await authResponse.json();
-                          const accessToken = authData.access_token;
-
-                          // 2. Parse split_config
-                          let split = null;
-                          if (gatewayConfig.split) {
-                            split = gatewayConfig.split;
-                          } else if (gatewayData.split_config) {
-                            try {
-                              split = typeof gatewayData.split_config === 'string' 
-                                ? JSON.parse(gatewayData.split_config)
-                                : gatewayData.split_config;
-                            } catch {
-                              // Ignore parse error
-                            }
-                          }
-
-                          // Validar dados
-                          if (!user.name || user.name.trim().length === 0) {
-                            throw new Error('Nome do usuário é obrigatório para realizar depósito');
-                          }
-
-
-                          if (depositAmount < 20) {
-                            throw new Error('Valor mínimo de depósito é R$ 20,00');
-                          }
-
-                          // 3. Preparar payload (exatamente como funcionava antes)
-                          const orderPayload: any = {
-                            payer_name: user.name.trim(),
-                            amount: parseFloat(depositAmount.toFixed(2)),
-                            callback_url: callbackUrl.trim(),
-                            client_reference_id: `deposit_${user.id}_${Date.now()}`,
-                          };
-
-                          if ((user as any).phone && (user as any).phone.trim()) {
-                            const cleanPhone = (user as any).phone.replace(/\D/g, '');
-                            if (cleanPhone.length >= 10) {
-                              orderPayload.phone = cleanPhone;
-                            }
-                          }
-
-                          if (split && Array.isArray(split) && split.length > 0) {
-                            orderPayload.split = split;
-                          }
-
-                          // 4. Criar pedido na HorsePay
-                          const orderResponse = await fetch(`${apiBaseUrl}/transaction/neworder`, {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              'Authorization': `Bearer ${accessToken}`,
-                            },
-                            body: JSON.stringify(orderPayload),
-                          });
-
+                          const orderResult = await orderResponse.json();
                           if (!orderResponse.ok) {
-                            let errorMessage = 'Erro ao criar pedido de depósito';
-                            try {
-                              const orderError = await orderResponse.json();
-                              errorMessage = orderError.message || orderError.error || JSON.stringify(orderError);
-                            } catch {
-                              const errorText = await orderResponse.text();
-                              errorMessage = errorText || `Erro HTTP ${orderResponse.status}: ${orderResponse.statusText}`;
-                            }
-                            throw new Error(errorMessage);
+                            const detail =
+                              orderResult.details?.httpStatus != null
+                                ? ` (HTTP ${orderResult.details.httpStatus})`
+                                : '';
+                            throw new Error((orderResult.error || 'Erro ao criar pedido de depósito') + detail);
                           }
 
-                          const orderData = await orderResponse.json();
-
-                          // 5. Verificar sucesso
-                          const isSuccess = orderData.status === 0 || orderData.external_id;
-
-                          if (isSuccess) {
-                            const hasPaymentData = orderData.copy_past || orderData.payment;
-
-                            if (!hasPaymentData) {
-                              toast.dismiss('deposit-processing');
-                              toast.custom((t) => (
-                                <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
-                                  style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
-                                  <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>QR code PIX não foi gerado pela API</p>
-                                </div>
-                              ), { duration: 3000, position: 'top-right' });
-                              return;
-                            }
-
-                            // Criar depósito no banco com status "pending"
-                            const paymentInfo = {
-                              qr_code: orderData.copy_past || null,
-                              payment_image: orderData.payment || null,
-                              external_id: orderData.external_id || null,
-                            };
-                            
-                            const { data: depositRecord, error: depositError } = await supabase
-                              .from('deposits')
-                              .insert({
-                                user_id: user.id,
-                                amount: depositAmount,
-                                method: gatewayData.type,
-                                status: 'pending',
-                                transaction_id: orderData.external_id?.toString() || orderData.client_reference_id,
-                                admin_notes: `Aguardando pagamento PIX. External ID: ${orderData.external_id || 'N/A'}. Payment Info: ${JSON.stringify(paymentInfo)}`,
-                              })
-                              .select()
-                              .single();
-
-                            if (depositError) {
-                              toast.dismiss('deposit-processing');
-                              toast.custom((t) => (
-                                <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
-                                  style={{ background: 'linear-gradient(135deg, #300a0a 0%, #450a0a 100%)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
-                                  <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>Erro ao criar registro de depósito. Tente novamente.</p>
-                                </div>
-                              ), { duration: 3000, position: 'top-right' });
-                              return;
-                            }
-
-                            // Mostrar modal com QR code PIX
-                            setPixPaymentData({
-                              qrCode: orderData.copy_past || '',
-                              paymentImage: orderData.payment || '',
-                              amount: depositAmount,
-                              externalId: orderData.external_id?.toString() || orderData.client_reference_id || '',
-                              depositId: depositRecord?.id,
-                            });
-                            setDepositPaymentStatus('pending');
-
-                            setShowDepositModal(false);
-                            setShowPixPaymentModal(true);
-
-                            setDepositStep('method');
-                            setSelectedGateway(null);
-                            setDepositAmount(20);
-                            setPromoCode('');
-                            setCpf('');
-                            setAcceptedTerms(false);
-
-                            toast.dismiss('deposit-processing');
-                            toast.custom((t) => (
-                              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
-                                style={{ background: 'linear-gradient(135deg, #052e16 0%, #064e3b 100%)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
-                                <p style={{ color: '#d1fae5', fontSize: '13px', fontWeight: 500, margin: 0 }}>
-                                  Pedido criado! Complete o pagamento PIX para finalizar.
-                                </p>
-                              </div>
-                            ), { duration: 4000, position: 'top-right' });
-                          } else {
-                            // API não retornou sucesso, criar como pending
-                            await supabase
-                              .from('deposits')
-                              .insert({
-                                user_id: user.id,
-                                amount: depositAmount,
-                                method: gatewayData.type,
-                                status: 'pending',
-                                transaction_id: orderData.external_id?.toString() || null,
-                              });
-
-                            toast.dismiss('deposit-processing');
-                            toast.custom((t) => (
-                              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
-                                style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
-                                <p style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: 500, margin: 0 }}>Pedido criado. Aguardando confirmação do pagamento.</p>
-                              </div>
-                            ), { duration: 4000, position: 'top-right' });
-
-                            setShowDepositModal(false);
-                            setDepositStep('method');
-                            setSelectedGateway(null);
-                            setDepositAmount(20);
-                            setPromoCode('');
-                            setCpf('');
-                            setAcceptedTerms(false);
+                          const firstOrder = orderResult.orders?.[0];
+                          if (!firstOrder?.qrCode) {
+                            throw new Error('QR code PIX não foi gerado pela API');
                           }
+
+                          setPixPaymentData({
+                            qrCode: firstOrder.qrCode,
+                            paymentImage: firstOrder.paymentImage || '',
+                            amount: orderResult.totalAmount || depositAmount,
+                            externalId: firstOrder.externalId || '',
+                            depositId: firstOrder.depositId,
+                            allOrders: orderResult.orders,
+                          });
+                          setDepositPaymentStatus('pending');
+                          setShowDepositModal(false);
+                          setShowPixPaymentModal(true);
+                          setDepositStep('method');
+                          setSelectedGateway(null);
+                          setDepositAmount(20);
+                          setPromoCode('');
+                          setCpf('');
+                          setAcceptedTerms(false);
+
+                          toast.dismiss('deposit-processing');
+                          toast.custom((t) => (
+                            <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} pointer-events-auto`}
+                              style={{ background: 'linear-gradient(135deg, #052e16 0%, #064e3b 100%)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '8px', padding: '12px 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', minWidth: '200px' }}>
+                              <p style={{ color: '#d1fae5', fontSize: '13px', fontWeight: 500, margin: 0 }}>
+                                Pedido criado! Complete o pagamento PIX para finalizar.
+                              </p>
+                            </div>
+                          ), { duration: 4000, position: 'top-right' });
                         } else {
                           // Para outros tipos de gateway, criar como pending para aprovação manual
                           const { error: depositError } = await supabase
@@ -5804,7 +5639,7 @@ const TradingPage: React.FC = () => {
                       }
                     }}
                     disabled={!cpf || cpf.length !== 11 || !acceptedTerms}
-                    className={`w-full py-4 rounded-lg font-medium text-lg transition-all ${
+                    className={`w-full py-3.5 sm:py-4 rounded-lg font-medium text-base sm:text-lg transition-all ${
                       cpf && cpf.length === 11 && acceptedTerms
                         ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg'
                         : 'bg-gray-700 text-gray-400 cursor-not-allowed'
@@ -5830,11 +5665,11 @@ const TradingPage: React.FC = () => {
           />
           {/* Modal */}
           <div 
-            className="fixed inset-0 flex items-center justify-center z-[60] p-4"
+            className="fixed inset-0 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div 
-              className="bg-black backdrop-blur-xl shadow-2xl overflow-hidden w-full max-w-md mx-4 animate-[fadeIn_0.2s_ease-out_forwards] border border-gray-800/50 flex flex-col max-h-[90vh] sm:max-h-[85vh] rounded"
+              className="bg-black backdrop-blur-xl shadow-2xl overflow-hidden w-full sm:max-w-md max-h-[92dvh] sm:max-h-[85vh] animate-[fadeIn_0.2s_ease-out_forwards] border border-gray-800/50 flex flex-col rounded-t-2xl sm:rounded"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}

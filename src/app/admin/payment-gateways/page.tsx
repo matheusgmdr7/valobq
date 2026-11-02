@@ -4,6 +4,49 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Edit, Trash2, X, Save, Power, PowerOff } from 'lucide-react';
 import toast from '@/lib/adminToast';
+import { ABACATEPAY_ADAPTER, DEFAULT_GENERIC_ADAPTER, HORSEPAY_ADAPTER, MONETIPAG_ADAPTER } from '@/lib/paymentGateways/genericConfig';
+
+type ProviderPreset = 'generic' | 'horsepay' | 'abacatepay' | 'monetipag';
+type AuthType = 'bearer_private' | 'bearer_public' | 'basic' | 'header' | 'none';
+
+const APP_CALLBACK_BASE =
+  typeof window !== 'undefined'
+    ? `${window.location.origin}/api/deposits/callback`
+    : 'https://valorenbroker.com/api/deposits/callback';
+
+function presetPaths(provider: ProviderPreset) {
+  if (provider === 'horsepay') {
+    return {
+      create_path: HORSEPAY_ADAPTER.endpoints.create.path,
+      status_path: HORSEPAY_ADAPTER.endpoints.status.path,
+      auth_type: 'basic' as AuthType,
+      amount_in_cents: false,
+    };
+  }
+  if (provider === 'abacatepay') {
+    return {
+      create_path: ABACATEPAY_ADAPTER.endpoints.create.path,
+      status_path: ABACATEPAY_ADAPTER.endpoints.status.path,
+      auth_type: 'bearer_private' as AuthType,
+      amount_in_cents: true,
+    };
+  }
+  if (provider === 'monetipag') {
+    return {
+      create_path: MONETIPAG_ADAPTER.endpoints.create.path,
+      status_path: MONETIPAG_ADAPTER.endpoints.status.path,
+      auth_type: 'bearer_private' as AuthType,
+      amount_in_cents: true,
+      api_base_url: 'https://api.monetipag.com',
+    };
+  }
+  return {
+    create_path: DEFAULT_GENERIC_ADAPTER.endpoints.create.path,
+    status_path: DEFAULT_GENERIC_ADAPTER.endpoints.status.path,
+    auth_type: 'bearer_private' as AuthType,
+    amount_in_cents: false,
+  };
+}
 
 interface PaymentGateway {
   id: string;
@@ -35,7 +78,14 @@ export default function PaymentGatewaysPage() {
     api_key: '',
     api_secret: '',
     webhook_url: '',
-    api_base_url: 'https://api.horsepay.io', // URL base da API (para diferentes versões/ambientes)
+    provider: 'generic' as ProviderPreset,
+    api_base_url: '',
+    webhook_secret: '',
+    create_path: DEFAULT_GENERIC_ADAPTER.endpoints.create.path,
+    status_path: DEFAULT_GENERIC_ADAPTER.endpoints.status.path,
+    auth_type: 'bearer_private' as AuthType,
+    amount_in_cents: false,
+    adapter_json: '',
     icon_url: '',
     description: '',
     estimated_time: '',
@@ -81,6 +131,39 @@ export default function PaymentGatewaysPage() {
         }
       }
 
+      let adapterOverride = null;
+      if (formData.adapter_json?.trim()) {
+        try {
+          adapterOverride = JSON.parse(formData.adapter_json);
+        } catch {
+          toast.error('Mapeamento avançado inválido. Use JSON válido.');
+          setSaving(false);
+          return;
+        }
+      }
+
+      const configPayload: Record<string, unknown> = {
+        provider: formData.provider,
+        api_base_url: formData.api_base_url?.trim() || null,
+        adapter: {
+          auth: { type: formData.auth_type },
+          endpoints: {
+            create: { path: formData.create_path.trim() },
+            status: { path: formData.status_path.trim() },
+          },
+          create: { amount_in_cents: formData.amount_in_cents },
+          ...(adapterOverride || {}),
+        },
+        split: splitConfig || null,
+      };
+      if (formData.webhook_secret.trim()) {
+        configPayload.webhook_secret = formData.webhook_secret.trim();
+      } else if (!editingGateway) {
+        configPayload.webhook_secret = null;
+      } else if (editingGateway.config?.webhook_secret) {
+        configPayload.webhook_secret = editingGateway.config.webhook_secret;
+      }
+
       const gatewayData: Record<string, any> = {
         name: formData.name,
         type: formData.type,
@@ -93,10 +176,7 @@ export default function PaymentGatewaysPage() {
         service_fee_percentage: formData.service_fee_percentage,
         min_amount: formData.min_amount,
         max_amount: formData.max_amount ? parseFloat(formData.max_amount) : null,
-        config: {
-          api_base_url: formData.api_base_url || 'https://api.horsepay.io',
-          split: splitConfig || null,
-        },
+        config: configPayload,
       };
 
       // Só incluir credenciais se foram preenchidas (evita sobrescrever com null ao editar)
@@ -190,7 +270,14 @@ export default function PaymentGatewaysPage() {
       api_key: '',
       api_secret: '',
       webhook_url: gateway.webhook_url || '',
-      api_base_url: config.api_base_url || 'https://api.horsepay.io',
+      provider: (config.provider as ProviderPreset) || 'generic',
+      api_base_url: config.api_base_url || '',
+      webhook_secret: config.webhook_secret || '',
+      create_path: config.adapter?.endpoints?.create?.path || DEFAULT_GENERIC_ADAPTER.endpoints.create.path,
+      status_path: config.adapter?.endpoints?.status?.path || DEFAULT_GENERIC_ADAPTER.endpoints.status.path,
+      auth_type: (config.adapter?.auth?.type as AuthType) || 'bearer_private',
+      amount_in_cents: Boolean(config.adapter?.create?.amount_in_cents),
+      adapter_json: config.adapter ? JSON.stringify(config.adapter, null, 2) : '',
       icon_url: gateway.icon_url || '',
       description: gateway.description || '',
       estimated_time: gateway.estimated_time || '',
@@ -211,7 +298,14 @@ export default function PaymentGatewaysPage() {
       api_key: '',
       api_secret: '',
       webhook_url: '',
-      api_base_url: 'https://api.horsepay.io',
+      provider: 'generic',
+      api_base_url: '',
+      webhook_secret: '',
+      create_path: DEFAULT_GENERIC_ADAPTER.endpoints.create.path,
+      status_path: DEFAULT_GENERIC_ADAPTER.endpoints.status.path,
+      auth_type: 'bearer_private',
+      amount_in_cents: false,
+      adapter_json: '',
       icon_url: '',
       description: '',
       estimated_time: '',
@@ -362,19 +456,38 @@ export default function PaymentGatewaysPage() {
                     </select>
                   </div>
 
+                  <div>
+                    <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">Preset (opcional)</label>
+                    <select
+                      value={formData.provider}
+                      onChange={(e) => {
+                        const provider = e.target.value as ProviderPreset;
+                        const paths = presetPaths(provider);
+                        setFormData({ ...formData, provider, ...paths });
+                      }}
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
+                    >
+                      <option value="generic">Genérico (configurável)</option>
+                      <option value="monetipag">MonetiPag (PIX)</option>
+                      <option value="horsepay">Preset HorsePay</option>
+                      <option value="abacatepay">Preset AbacatePay</option>
+                    </select>
+                    <p className="text-[10px] text-white/20 mt-1">Preenche endpoints padrão. Você pode ajustar manualmente abaixo.</p>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">
-                        API Key / Client Key
+                        Chave pública
                       </label>
                       <input
                         type="password"
                         value={formData.api_key}
                         onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
                         className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
-                        placeholder="Client Key (HorsePay) ou API Key"
+                        placeholder="Chave pública da API"
                       />
-                      <p className="text-[10px] text-white/20 mt-1">Para HorsePay: client_key</p>
+                      <p className="text-[10px] text-white/20 mt-1">Validação HMAC do webhook ou client key (Basic auth).</p>
                       {editingGateway && (
                         <p className="text-[10px] text-amber-400/60 mt-0.5">Deixe vazio para manter a chave atual</p>
                       )}
@@ -382,16 +495,16 @@ export default function PaymentGatewaysPage() {
 
                     <div>
                       <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">
-                        API Secret / Client Secret
+                        Chave privada
                       </label>
                       <input
                         type="password"
                         value={formData.api_secret}
                         onChange={(e) => setFormData({ ...formData, api_secret: e.target.value })}
                         className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
-                        placeholder="Client Secret (HorsePay) ou API Secret"
+                        placeholder="Chave privada / Bearer token"
                       />
-                      <p className="text-[10px] text-white/20 mt-1">Para HorsePay: client_secret</p>
+                      <p className="text-[10px] text-white/20 mt-1">Usada para criar cobranças e consultar status.</p>
                       {editingGateway && (
                         <p className="text-[10px] text-amber-400/60 mt-0.5">Deixe vazio para manter o secret atual</p>
                       )}
@@ -399,15 +512,25 @@ export default function PaymentGatewaysPage() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">Webhook URL (Callback URL)</label>
+                    <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">Webhook Secret</label>
                     <input
-                      type="url"
-                      value={formData.webhook_url}
-                      onChange={(e) => setFormData({ ...formData, webhook_url: e.target.value })}
+                      type="password"
+                      value={formData.webhook_secret}
+                      onChange={(e) => setFormData({ ...formData, webhook_secret: e.target.value })}
                       className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
-                      placeholder="https://seu-webhook.com/callback"
+                      placeholder="Secret do webhook"
                     />
-                    <p className="text-[10px] text-white/20 mt-1">URL para receber notificações de pagamento (HorsePay: callback_url)</p>
+                    <p className="text-[10px] text-white/20 mt-1">
+                      URL de callback sugerida:{' '}
+                      <span className="text-white/40 font-mono break-all">
+                        {APP_CALLBACK_BASE}?webhookSecret=SEU_SECRET
+                      </span>
+                    </p>
+                    <p className="text-[10px] text-white/20 mt-0.5">
+                      Assinatura: HMAC-SHA256 em <span className="font-mono">X-Signature</span> (
+                      <span className="font-mono">t=...,v1=...</span>) +{' '}
+                      <span className="font-mono">X-Webhook-Timestamp</span>. Chave HMAC: Webhook Secret.
+                    </p>
                   </div>
 
                   <div>
@@ -417,9 +540,85 @@ export default function PaymentGatewaysPage() {
                       value={formData.api_base_url}
                       onChange={(e) => setFormData({ ...formData, api_base_url: e.target.value })}
                       className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
-                      placeholder="https://api.horsepay.io"
+                      placeholder="https://api.sua-gateway.com"
                     />
-                    <p className="text-[10px] text-white/20 mt-1">URL base da API (ex: https://api.horsepay.io para HorsePay)</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">Endpoint criar PIX</label>
+                      <input
+                        type="text"
+                        value={formData.create_path}
+                        onChange={(e) => setFormData({ ...formData, create_path: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 font-mono placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
+                        placeholder="/pix/charge"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">Endpoint status</label>
+                      <input
+                        type="text"
+                        value={formData.status_path}
+                        onChange={(e) => setFormData({ ...formData, status_path: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 font-mono placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
+                        placeholder="/pix/charge/{id}"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">Autenticação</label>
+                      <select
+                        value={formData.auth_type}
+                        onChange={(e) => setFormData({ ...formData, auth_type: e.target.value as AuthType })}
+                        className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 focus:outline-none focus:border-white/[0.12]"
+                      >
+                        <option value="bearer_private">Bearer (chave privada)</option>
+                        <option value="bearer_public">Bearer (chave pública)</option>
+                        <option value="basic">Basic (pública:privada)</option>
+                        <option value="none">Sem autenticação</option>
+                      </select>
+                    </div>
+                    <div className="flex items-end pb-1">
+                      <label className="flex items-center gap-2 text-xs text-white/60 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formData.amount_in_cents}
+                          onChange={(e) => setFormData({ ...formData, amount_in_cents: e.target.checked })}
+                          className="rounded border-white/20"
+                        />
+                        Valor em centavos na API
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">
+                      Mapeamento avançado (JSON opcional)
+                    </label>
+                    <textarea
+                      value={formData.adapter_json}
+                      onChange={(e) => setFormData({ ...formData, adapter_json: e.target.value })}
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12] font-mono"
+                      placeholder='{"create":{"body":{"amount":"{{amount}}"}},"webhook":{"transaction_id":["id"]}}'
+                      rows={5}
+                    />
+                    <p className="text-[10px] text-white/20 mt-1">
+                      Sobrescreve campos do adapter: body da requisição, paths de resposta (qr_code, transaction_id) e webhook.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">Callback URL legado (opcional)</label>
+                    <input
+                      type="url"
+                      value={formData.webhook_url}
+                      onChange={(e) => setFormData({ ...formData, webhook_url: e.target.value })}
+                      className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
+                      placeholder="Usado como callback_url na criação (se a API exigir)"
+                    />
                   </div>
 
                   <div>
