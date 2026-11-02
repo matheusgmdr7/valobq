@@ -200,11 +200,23 @@ const binanceKlineSnapshot = new Map<
   { open: number; high: number; low: number; close: number; volume: number }
 >();
 
-function nextTickTimestamp(symbol: string): number {
-  const baseTimestamp = Date.now();
+const BINANCE_BAR_MS = 60000;
+
+/** Carimbo único, sempre dentro do minuto de `now` — não empurra o tick para o candle seguinte. */
+function nextTickTimestamp(symbol: string, now = Date.now()): number {
   const counter = (tickCounter.get(symbol) || 0) + 1;
   tickCounter.set(symbol, counter);
-  return baseTimestamp + (counter % 1000);
+  const barStart = Math.floor(now / BINANCE_BAR_MS) * BINANCE_BAR_MS;
+  const barEnd = barStart + BINANCE_BAR_MS - 1;
+  return Math.min(barEnd, now + (counter % 30));
+}
+
+/** Carimbo dentro do candle da Binance (`k.t`), para o fechamento não cair no minuto novo. */
+function stampInsideBar(symbol: string, barStart: number): number {
+  const counter = (tickCounter.get(symbol) || 0) + 1;
+  tickCounter.set(symbol, counter);
+  const start = Math.floor(barStart / BINANCE_BAR_MS) * BINANCE_BAR_MS;
+  return start + Math.min(BINANCE_BAR_MS - 1, counter % 1000);
 }
 
 function emitBinanceTick(
@@ -216,6 +228,8 @@ function emitBinanceTick(
     high?: number;
     low?: number;
     volume?: number;
+    /** Início do kline (`k.t`). Quando presente, o tick fica nesse candle. */
+    barStart?: number;
   },
 ): void {
   if (!price || !isFinite(price) || price <= 0) return;
@@ -235,7 +249,9 @@ function emitBinanceTick(
   const tick: CanonicalTick = {
     symbol,
     price,
-    timestamp: nextTickTimestamp(symbol),
+    timestamp: opts.barStart && opts.barStart > 0
+      ? stampInsideBar(symbol, opts.barStart)
+      : nextTickTimestamp(symbol),
     volume: snap.volume,
     open: snap.open,
     high: snap.high,
@@ -313,6 +329,7 @@ function connectBinance(symbol: string): void {
           high,
           low,
           volume,
+          barStart: startTime,
         });
         binanceKlineSnapshot.set(symbol, {
           open: close,
