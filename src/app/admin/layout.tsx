@@ -1,7 +1,7 @@
 'use client';
 
 import { ReactNode, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { AdminSidebar } from '@/components/admin/AdminSidebar';
 import { AdminToaster } from '@/components/admin/AdminToaster';
 import { useAuth } from '@/contexts/AuthContext';
@@ -9,16 +9,27 @@ import { useAuth } from '@/contexts/AuthContext';
 export default function AdminLayout({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const isAccess = pathname === '/admin/acesso';
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || isAccess) return;
 
     if (!user) {
-      router.replace('/login');
+      router.replace('/admin/acesso');
     } else if (user.role !== 'admin') {
       router.replace('/dashboard/trading');
     }
-  }, [user, loading, router]);
+  }, [user, loading, router, isAccess]);
+
+  if (isAccess) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0b]">
+        <AdminToaster />
+        {children}
+      </div>
+    );
+  }
 
   // Enquanto carrega auth
   if (loading) {
