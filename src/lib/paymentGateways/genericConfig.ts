@@ -107,7 +107,7 @@ export const MONETIPAG_ADAPTER: GenericAdapterConfig = {
         name: '{{user_name}}',
         cpf_cnpj: '{{cpf}}',
         email: '{{user_email}}',
-        phone: '{{phone_br}}',
+        phone: '+55 (11) 99999-9999',
         address_zip: '01310-100',
         address_line: 'Avenida Paulista',
         address_number: '1578',

@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { formatBrazilPhone, isValidCpf } from './brDocuments';
+
+const MONETIPAG_DEFAULT_PHONE = '+55 (11) 99999-9999';
 import type {
   CreatePixOrderInput,
   GatewayCredentials,
@@ -178,9 +180,6 @@ function buildMonetipagInvoice(
   if (!isValidCpf(String(vars.cpf || ''))) {
     throw new Error('CPF inválido. Informe um CPF real de 11 dígitos.');
   }
-  if (!vars.phone_br) {
-    throw new Error('O Monetipag exige o telefone do pagador com DDD.');
-  }
   if (!vars.user_email) {
     throw new Error('O Monetipag exige o e-mail do pagador.');
   }
@@ -195,7 +194,7 @@ function buildMonetipagInvoice(
       name: vars.user_name,
       cpf_cnpj: vars.cpf,
       email: vars.user_email,
-      phone: vars.phone_br,
+      phone: MONETIPAG_DEFAULT_PHONE,
       address_zip: '01310-100',
       address_line: 'Avenida Paulista',
       address_number: '1578',
