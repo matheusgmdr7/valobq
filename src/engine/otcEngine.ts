@@ -49,6 +49,17 @@ export interface OTCRhythmConfig {
   fastPace: number;
 }
 
+/**
+ * Mesmo ritmo do forex: fases de 10–30 min, ticks espaçados e sem chicote.
+ * Ações, índices e commodities reutilizam isto; só a faixa de preço muda.
+ */
+const FOREX_RHYTHM: OTCRhythmConfig = {
+  phaseMinMs: 10 * 60 * 1000,
+  phaseMaxMs: 30 * 60 * 1000,
+  slowPace: 0.58,
+  fastPace: 1.32,
+};
+
 /** Configurações por categoria de ativo */
 const OTC_CONFIGS: Record<string, OTCConfig> = {
   forex: {
@@ -63,48 +74,51 @@ const OTC_CONFIGS: Record<string, OTCConfig> = {
     momentumScale: 0.025,
     maxDeviationPercent: 0.001,
     maxTickChangePercent: 0.0000016,
-    rhythm: {
-      phaseMinMs: 10 * 60 * 1000,
-      phaseMaxMs: 30 * 60 * 1000,
-      slowPace: 0.58,
-      fastPace: 1.32,
-    },
+    rhythm: FOREX_RHYTHM,
   },
+  // Mesma qualidade do forex: tick ~250 ms, muito tempo lateral, momentum baixo
+  // e teto por tick. A faixa é só um pouco maior (ação anda mais que um par).
   stocks: {
-    volatility: 0.00005,
-    meanReversionSpeed: 0.004,
-    tickIntervalMs: 52,
+    volatility: 0.0000052,
+    meanReversionSpeed: 0.013,
+    tickIntervalMs: 250,
     spreadPercent: 0.01,
-    maxTrendStrength: 0.00002,
-    trendDurationTicks: 90,
-    trendIdleProbability: 0.28,
-    momentumCarry: 0.2,
-    momentumScale: 0.28,
-    maxDeviationPercent: 0.012,
+    maxTrendStrength: 0.000001,
+    trendDurationTicks: 220,
+    trendIdleProbability: 0.62,
+    momentumCarry: 0.03,
+    momentumScale: 0.04,
+    maxDeviationPercent: 0.002,
+    maxTickChangePercent: 0.0000022,
+    rhythm: FOREX_RHYTHM,
   },
   indices: {
-    volatility: 0.000042,
-    meanReversionSpeed: 0.004,
-    tickIntervalMs: 50,
+    volatility: 0.0000046,
+    meanReversionSpeed: 0.013,
+    tickIntervalMs: 260,
     spreadPercent: 0.005,
-    maxTrendStrength: 0.000018,
-    trendDurationTicks: 100,
-    trendIdleProbability: 0.3,
-    momentumCarry: 0.18,
-    momentumScale: 0.25,
-    maxDeviationPercent: 0.008,
+    maxTrendStrength: 0.0000009,
+    trendDurationTicks: 230,
+    trendIdleProbability: 0.62,
+    momentumCarry: 0.028,
+    momentumScale: 0.035,
+    maxDeviationPercent: 0.0016,
+    maxTickChangePercent: 0.000002,
+    rhythm: FOREX_RHYTHM,
   },
   commodities: {
-    volatility: 0.000043,
-    meanReversionSpeed: 0.004,
-    tickIntervalMs: 58,
+    volatility: 0.0000056,
+    meanReversionSpeed: 0.012,
+    tickIntervalMs: 250,
     spreadPercent: 0.008,
-    maxTrendStrength: 0.000018,
-    trendDurationTicks: 85,
-    trendIdleProbability: 0.28,
-    momentumCarry: 0.18,
-    momentumScale: 0.26,
-    maxDeviationPercent: 0.01,
+    maxTrendStrength: 0.00000105,
+    trendDurationTicks: 210,
+    trendIdleProbability: 0.58,
+    momentumCarry: 0.03,
+    momentumScale: 0.04,
+    maxDeviationPercent: 0.0022,
+    maxTickChangePercent: 0.0000024,
+    rhythm: FOREX_RHYTHM,
   },
 };
 
