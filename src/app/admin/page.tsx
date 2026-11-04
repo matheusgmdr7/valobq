@@ -29,6 +29,31 @@ function getDateFrom(period: PeriodFilter): string | null {
   return date.toISOString();
 }
 
+function buildRecentActivity(deposits: any[], withdrawals: any[]) {
+  const combined = [
+    ...deposits.slice(0, 5).map((d) => ({ ...d, type: 'deposit' })),
+    ...withdrawals.slice(0, 5).map((w) => ({
+      ...w,
+      type: 'withdrawal',
+      userName: w.user_name || (w.first_name ? `${w.first_name} ${w.last_name || ''}`.trim() : null),
+    })),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 8);
+
+  return combined.map((tx) => {
+    const diffMs = Date.now() - new Date(tx.created_at).getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const timeStr = diffMins < 60 ? `${diffMins}min` : diffHours < 24 ? `${diffHours}h` : `${Math.floor(diffHours / 24)}d`;
+    return {
+      type: tx.type,
+      user: tx.userName || tx.user_name || tx.user_id?.slice(0, 8) || '—',
+      amount: parseFloat(tx.amount?.toString() || '0'),
+      status: tx.status,
+      time: timeStr,
+    };
+  });
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const [tradingEnabled, setTradingEnabled] = useState(true);
@@ -148,43 +173,34 @@ export default function AdminPage() {
       if (dateFrom) newUsersQuery = newUsersQuery.gte('created_at', dateFrom);
       const { count: newUsers } = await newUsersQuery;
 
-      // Depósitos concluídos (da tabela deposits)
-      let depsQuery = supabase.from('deposits').select('amount').eq('status', 'approved');
-      if (dateFrom) depsQuery = depsQuery.gte('created_at', dateFrom);
-      const { data: depositsData } = await depsQuery;
-      const totalDeposits = depositsData?.reduce((s, d) => s + parseFloat(d.amount?.toString() || '0'), 0) || 0;
-      const depositCount = depositsData?.length || 0;
-
-      // Saques processados (da tabela withdrawal_requests)
-      let wdQuery = supabase.from('withdrawal_requests').select('amount').in('status', ['approved', 'completed']);
-      if (dateFrom) wdQuery = wdQuery.gte('created_at', dateFrom);
-      const { data: withdrawalsData } = await wdQuery;
-      const totalWithdrawals = withdrawalsData?.reduce((s, w) => s + parseFloat(w.amount?.toString() || '0'), 0) || 0;
-      const withdrawalCount = withdrawalsData?.length || 0;
-
-      // Depósitos pendentes
-      const { count: pendingDeposits } = await supabase
-        .from('deposits').select('*', { count: 'exact', head: true }).eq('status', 'pending');
-
-      // Saques pendentes
-      const { count: pendingWithdrawals } = await supabase
-        .from('withdrawal_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+      const financeParams = new URLSearchParams({ status: 'all', method: 'all' });
+      if (dateFrom) financeParams.set('from', dateFrom);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      let finance: { summary?: Record<string, number>; deposits?: any[]; withdrawals?: any[] } | null = null;
+      if (token) {
+        const financeRes = await fetch(`/api/admin/finance?${financeParams.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (financeRes.ok) finance = await financeRes.json();
+      }
+      const summary = finance?.summary;
 
       setStats({
         totalUsers: totalUsers || 0,
         newUsers: newUsers || 0,
         activeTrades: 0,
-        totalDeposits,
-        totalWithdrawals,
-        depositCount,
-        withdrawalCount,
-        pendingDeposits: pendingDeposits || 0,
-        pendingWithdrawals: pendingWithdrawals || 0,
+        totalDeposits: summary?.totalDeposits || 0,
+        totalWithdrawals: summary?.totalWithdrawals || 0,
+        depositCount: summary?.depositCount || 0,
+        withdrawalCount: summary?.withdrawalCount || 0,
+        pendingDeposits: summary?.pendingDeposits || 0,
+        pendingWithdrawals: summary?.pendingWithdrawals || 0,
       });
 
       // Gráfico de novos usuários (últimos N dias)
       await loadNewUsersChart(dateFrom);
-      await loadRecentActivity();
+      setRecentActivity(buildRecentActivity(finance?.deposits || [], finance?.withdrawals || []));
     } catch (error: any) {
       console.error('Erro ao carregar estatísticas:', error);
     } finally {
@@ -224,45 +240,6 @@ export default function AdminPage() {
     }
   };
 
-  const loadRecentActivity = async () => {
-    try {
-      if (!supabase) return;
-
-      const { data: deposits } = await supabase
-        .from('deposits')
-        .select('id, amount, status, created_at, user_id')
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      const { data: withdrawals } = await supabase
-        .from('withdrawal_requests')
-        .select('id, amount, status, created_at, user_id, first_name, last_name')
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      const combined = [
-        ...(deposits || []).map((d: any) => ({ ...d, type: 'deposit' })),
-        ...(withdrawals || []).map((w: any) => ({ ...w, type: 'withdrawal', userName: w.first_name ? `${w.first_name} ${w.last_name || ''}`.trim() : null })),
-      ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 8);
-
-      const activity = combined.map((tx: any) => {
-        const diffMs = Date.now() - new Date(tx.created_at).getTime();
-        const diffMins = Math.floor(diffMs / 60000);
-        const diffHours = Math.floor(diffMs / 3600000);
-        let timeStr = diffMins < 60 ? `${diffMins}min` : diffHours < 24 ? `${diffHours}h` : `${Math.floor(diffHours / 24)}d`;
-        return {
-          type: tx.type,
-          user: tx.userName || tx.user_id?.slice(0, 8) || '—',
-          amount: parseFloat(tx.amount?.toString() || '0'),
-          status: tx.status,
-          time: timeStr,
-        };
-      });
-      setRecentActivity(activity);
-    } catch (error) {
-      console.error('Erro ao carregar atividades recentes:', error);
-    }
-  };
 
   const maxChartValue = Math.max(...newUsersChart.map(d => d.count), 1);
 
