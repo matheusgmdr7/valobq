@@ -213,7 +213,11 @@ export default function PaymentGatewaysPage() {
         throw new Error(json.error || 'Erro ao salvar gateway');
       }
 
-      toast.success(editingGateway ? 'Gateway atualizado com sucesso!' : 'Gateway criado com sucesso!');
+      if (editingGateway && formData.provider === 'monetipag' && !formData.api_secret.trim()) {
+        toast.success('Webhook atualizado. A chave privada da conta não foi alterada.');
+      } else {
+        toast.success(editingGateway ? 'Gateway atualizado com sucesso!' : 'Gateway criado com sucesso!');
+      }
       setShowModal(false);
       setEditingGateway(null);
       resetForm();
@@ -495,24 +499,25 @@ export default function PaymentGatewaysPage() {
 
                     <div>
                       <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">
-                        Chave privada
+                        Chave privada da conta
                       </label>
                       <input
                         type="password"
                         value={formData.api_secret}
                         onChange={(e) => setFormData({ ...formData, api_secret: e.target.value })}
                         className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-xs text-white/80 placeholder-white/15 focus:outline-none focus:border-white/[0.12]"
-                        placeholder="Chave privada / Bearer token"
+                        placeholder="Token Bearer da conta Monetipag"
                       />
-                      <p className="text-[10px] text-white/20 mt-1">Usada para criar cobranças e consultar status.</p>
+                      <p className="text-[10px] text-white/20 mt-1">Esta chave escolhe a conta que recebe o PIX.</p>
                       {editingGateway && (
-                        <p className="text-[10px] text-amber-400/60 mt-0.5">Deixe vazio para manter o secret atual</p>
+                        <p className="text-[10px] text-amber-400/60 mt-0.5">Deixe vazio para manter a conta atual. Cole a chave nova para trocar de conta.</p>
                       )}
                     </div>
                   </div>
 
                   <div>
                     <label className="block text-[10px] font-semibold text-white/25 uppercase tracking-wider mb-1.5">Webhook Secret</label>
+                    <p className="text-[10px] text-white/30 mb-1.5">Não escolhe a conta da Monetipag. Só valida o aviso de pagamento.</p>
                     <input
                       type="password"
                       value={formData.webhook_secret}

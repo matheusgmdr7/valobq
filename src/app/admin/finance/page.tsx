@@ -86,87 +86,44 @@ export default function FinancePage() {
   const [userStats, setUserStats] = useState({ depositsCount: 0, withdrawalsCount: 0, totalDeposits: 0, totalWithdrawals: 0 });
   const [transferMethod, setTransferMethod] = useState<'api' | 'manual'>('api');
   const [transactionId, setTransactionId] = useState('');
-  const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
 
-  useEffect(() => {
-    const loadUserNames = async () => {
-      if (!supabase) return;
-      try {
-        const { data: users } = await supabase.from('users').select('id, name, email');
-        if (users) {
-          const map = new Map<string, string>();
-          users.forEach((u: any) => map.set(u.id, u.name || u.email || u.id.slice(0, 8)));
-          setUserNames(map);
-        }
-      } catch { /* ignore */ }
-    };
-    loadUserNames();
+  const adminFetch = useCallback(async (path: string, init?: RequestInit) => {
+    if (!supabase) throw new Error('Banco de dados não configurado');
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error('Sessão expirada. Entre novamente.');
+    const res = await fetch(path, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(init?.headers || {}),
+      },
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Erro ao carregar dados');
+    return json;
   }, []);
 
-  useEffect(() => { loadSummary(); }, [period]);
-  useEffect(() => { loadData(); }, [activeTab, statusFilter, methodFilter, period, userNames]);
-
-  const loadSummary = useCallback(async () => {
-    if (!supabase) return;
-    try {
-      const dateFrom = getDateFrom(period);
-
-      let dq = supabase.from('deposits').select('amount').eq('status', 'approved');
-      if (dateFrom) dq = dq.gte('created_at', dateFrom);
-      const { data: dd } = await dq;
-
-      let wq = supabase.from('withdrawal_requests').select('amount').in('status', ['approved', 'completed']);
-      if (dateFrom) wq = wq.gte('created_at', dateFrom);
-      const { data: wd } = await wq;
-
-      const { count: pd } = await supabase.from('deposits').select('*', { count: 'exact', head: true }).eq('status', 'pending');
-      const { count: pw } = await supabase.from('withdrawal_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending');
-
-      setSummaryStats({
-        totalDeposits: dd?.reduce((s, d) => s + parseFloat(d.amount?.toString() || '0'), 0) || 0,
-        totalWithdrawals: wd?.reduce((s, w) => s + parseFloat(w.amount?.toString() || '0'), 0) || 0,
-        depositCount: dd?.length || 0,
-        withdrawalCount: wd?.length || 0,
-        pendingDeposits: pd || 0,
-        pendingWithdrawals: pw || 0,
-      });
-    } catch (error) {
-      console.error('Erro ao carregar resumo:', error);
-    }
-  }, [period]);
-
-  const loadData = async () => {
+  const loadFinance = useCallback(async () => {
     setLoading(true);
     try {
-      if (!supabase) { setDeposits([]); setWithdrawals([]); return; }
       const dateFrom = getDateFrom(period);
-
-      if (activeTab === 'deposits') {
-        let query = supabase.from('deposits').select('*').order('created_at', { ascending: false }).limit(200);
-        if (statusFilter !== 'all') query = query.eq('status', statusFilter);
-        if (methodFilter !== 'all') query = query.eq('method', methodFilter);
-        if (dateFrom) query = query.gte('created_at', dateFrom);
-
-        const { data, error } = await query;
-        if (error) throw error;
-        setDeposits((data || []).map((d: any) => ({ ...d, user_name: userNames.get(d.user_id) || d.user_id?.slice(0, 8) })));
-      } else {
-        let query = supabase.from('withdrawal_requests').select('*').order('created_at', { ascending: false }).limit(200);
-        if (statusFilter !== 'all') query = query.eq('status', statusFilter);
-        if (methodFilter !== 'all') query = query.eq('method', methodFilter);
-        if (dateFrom) query = query.gte('created_at', dateFrom);
-
-        const { data, error } = await query;
-        if (error) throw error;
-        setWithdrawals((data || []).map((w: any) => ({ ...w, user_name: userNames.get(w.user_id) || w.first_name ? `${w.first_name} ${w.last_name || ''}`.trim() : w.user_id?.slice(0, 8) })));
-      }
+      const params = new URLSearchParams({ status: statusFilter, method: methodFilter });
+      if (dateFrom) params.set('from', dateFrom);
+      const json = await adminFetch(`/api/admin/finance?${params.toString()}`);
+      setDeposits(json.deposits || []);
+      setWithdrawals(json.withdrawals || []);
+      if (json.summary) setSummaryStats(json.summary);
     } catch (error: any) {
       console.error('Erro ao carregar dados:', error);
-      toast.error('Erro ao carregar dados');
+      toast.error(error.message || 'Erro ao carregar dados');
     } finally {
       setLoading(false);
     }
-  };
+  }, [adminFetch, period, statusFilter, methodFilter]);
+
+  useEffect(() => { loadFinance(); }, [loadFinance]);
 
   const handleApprove = async (id: string, type: 'deposit' | 'withdrawal') => {
     try {
@@ -204,8 +161,7 @@ export default function FinancePage() {
             : 'Depósito aprovado e saldo creditado!',
         );
       }
-      loadData();
-      loadSummary();
+      loadFinance();
     } catch (error: any) {
       console.error('Erro ao aprovar:', error);
       toast.error(error.message || 'Erro ao aprovar');
@@ -222,12 +178,17 @@ export default function FinancePage() {
         if (error) throw error;
         toast.success('Saque rejeitado');
       } else {
-        const { error } = await supabase.from('deposits').update({ status: 'rejected', admin_notes: reason || 'Rejeitado pelo administrador' }).eq('id', id);
-        if (error) throw error;
+        await adminFetch('/api/admin/finance', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'reject-deposit',
+            id,
+            reason: reason || 'Rejeitado pelo administrador',
+          }),
+        });
         toast.success('Depósito rejeitado');
       }
-      loadData();
-      loadSummary();
+      loadFinance();
     } catch (error: any) {
       console.error('Erro ao rejeitar:', error);
       toast.error(error.message || 'Erro ao rejeitar');
@@ -239,20 +200,9 @@ export default function FinancePage() {
     try {
       const { data: requestData } = await supabase.from('withdrawal_requests').select('*').eq('id', withdrawal.id).single();
       setSelectedWithdrawal(requestData as any);
-      const { data: userData } = await supabase.from('users').select('*').eq('id', withdrawal.user_id).single();
-      setUserInfo(userData);
-      const [depositsResult, withdrawalsResult] = await Promise.all([
-        supabase.from('deposits').select('id, amount, status').eq('user_id', withdrawal.user_id),
-        supabase.from('withdrawal_requests').select('id, amount, status').eq('user_id', withdrawal.user_id),
-      ]);
-      const deps = depositsResult.data || [];
-      const wds = withdrawalsResult.data || [];
-      setUserStats({
-        depositsCount: deps.length,
-        withdrawalsCount: wds.length,
-        totalDeposits: deps.filter((d: any) => d.status === 'approved' || d.status === 'completed').reduce((s: number, d: any) => s + parseFloat(d.amount), 0),
-        totalWithdrawals: wds.filter((w: any) => w.status === 'approved' || w.status === 'completed').reduce((s: number, w: any) => s + parseFloat(w.amount), 0),
-      });
+      const info = await adminFetch(`/api/admin/finance?user_id=${encodeURIComponent(withdrawal.user_id)}`);
+      setUserInfo(info.user);
+      setUserStats(info.stats || { depositsCount: 0, withdrawalsCount: 0, totalDeposits: 0, totalWithdrawals: 0 });
       setShowAnalysisModal(true);
     } catch (error: any) {
       console.error('Erro ao carregar informações:', error);
@@ -278,8 +228,7 @@ export default function FinancePage() {
       setShowAnalysisModal(false);
       setSelectedWithdrawal(null);
       setTransactionId('');
-      loadData();
-      loadSummary();
+      loadFinance();
     } catch (error: any) {
       console.error('Erro ao completar transferência:', error);
       toast.error(error.message || 'Erro ao completar transferência');
@@ -340,7 +289,7 @@ export default function FinancePage() {
                 </div>
               )}
             </div>
-            <button onClick={() => { loadData(); loadSummary(); }} className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white/50 hover:bg-white/10 transition-all">
+            <button onClick={() => { loadFinance(); }} className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white/50 hover:bg-white/10 transition-all">
               <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
