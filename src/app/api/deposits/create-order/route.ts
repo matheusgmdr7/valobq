@@ -20,6 +20,36 @@ function getAdminSupabase() {
   });
 }
 
+function resolveDepositCallbackUrl(
+  webhookUrl: string | null | undefined,
+  origin: string | undefined,
+  webhookSecret: string | null
+): string {
+  const fallback = `${origin || process.env.NEXT_PUBLIC_APP_URL || 'https://valorenbroker.com'}/api/deposits/callback`;
+  let url = fallback;
+
+  if (webhookUrl?.trim()) {
+    try {
+      const parsed = new URL(webhookUrl.trim());
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') url = parsed.toString();
+    } catch {
+      url = fallback;
+    }
+  }
+
+  if (!webhookSecret) return url;
+
+  try {
+    const parsed = new URL(url);
+    if (!parsed.searchParams.get('webhookSecret')) {
+      parsed.searchParams.set('webhookSecret', webhookSecret);
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Cria ordem(s) de depósito PIX via gateway configurável
  * POST /api/deposits/create-order
@@ -88,9 +118,11 @@ export async function POST(request: NextRequest) {
       amount,
     });
 
-    const callbackUrl =
-      gateway.webhook_url?.trim() ||
-      `${origin || process.env.NEXT_PUBLIC_APP_URL || 'https://valorenbroker.com'}/api/deposits/callback`;
+    const callbackUrl = resolveDepositCallbackUrl(
+      gateway.webhook_url,
+      origin,
+      creds.webhookSecret
+    );
 
     const { orders, chunks } = await createPixOrdersForGateway(
       gateway,

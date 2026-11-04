@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { formatBrazilPhone, isValidCpf } from './brDocuments';
 import type {
   CreatePixOrderInput,
   GatewayCredentials,
@@ -152,8 +153,65 @@ function buildTemplateVars(input: CreatePixOrderInput, callbackUrl?: string): Re
     cpf: input.cpf?.replace(/\D/g, '') || '',
     cpf_formatted: formatCpf(input.cpf),
     phone,
+    phone_br: formatBrazilPhone(input.userPhone),
     reference_id: referenceId,
     callback_url: callbackUrl || '',
+  };
+}
+
+function sanitizeInvoiceForLog(body: Record<string, unknown>): Record<string, unknown> {
+  const clone = JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
+  const payer = clone.payer;
+  if (payer && typeof payer === 'object') {
+    const row = payer as Record<string, unknown>;
+    if (row.cpf_cnpj) row.cpf_cnpj = '***';
+    if (row.email) row.email = '***';
+    if (row.phone) row.phone = '***';
+  }
+  return clone;
+}
+
+/** Corpo exigido por POST /api/v2/invoices. Campos fora do contrato geram HTTP 400. */
+function buildMonetipagInvoice(
+  vars: Record<string, string | number>
+): Record<string, unknown> {
+  if (!isValidCpf(String(vars.cpf || ''))) {
+    throw new Error('CPF inválido. Informe um CPF real de 11 dígitos.');
+  }
+  if (!vars.phone_br) {
+    throw new Error('O Monetipag exige o telefone do pagador com DDD.');
+  }
+  if (!vars.user_email) {
+    throw new Error('O Monetipag exige o e-mail do pagador.');
+  }
+
+  return {
+    method: 'pix',
+    product_fisical: 'digital',
+    total_price_cents: vars.amount_cents,
+    external_id: vars.reference_id,
+    postback_url: vars.callback_url,
+    payer: {
+      name: vars.user_name,
+      cpf_cnpj: vars.cpf,
+      email: vars.user_email,
+      phone: vars.phone_br,
+      address_zip: '01310-100',
+      address_line: 'Avenida Paulista',
+      address_number: '1578',
+      address_complement: 'Conjunto',
+      address_city: 'Sao Paulo',
+      address_state: 'SP',
+      address_neighborhood: 'Bela Vista',
+    },
+    items: [
+      {
+        name: 'Deposito',
+        description: 'Deposito na plataforma',
+        quantity: 1,
+        unit_price: vars.amount_cents,
+      },
+    ],
   };
 }
 
@@ -207,11 +265,16 @@ export async function createGenericPixOrder(
 ): Promise<PixOrderResult> {
   const adapter = creds.adapter;
   const vars = buildTemplateVars(input, input.callbackUrl);
-  const bodyTemplate = adapter.create.body || {};
-  const body = interpolateValue(bodyTemplate, vars) as Record<string, unknown>;
+  let body: Record<string, unknown>;
 
-  if (adapter.create.amount_in_cents && body.amount === undefined) {
-    body.amount = vars.amount_cents;
+  if (creds.provider === 'monetipag') {
+    body = buildMonetipagInvoice(vars);
+  } else {
+    const bodyTemplate = adapter.create.body || {};
+    body = interpolateValue(bodyTemplate, vars) as Record<string, unknown>;
+    if (adapter.create.amount_in_cents && body.amount === undefined) {
+      body.amount = vars.amount_cents;
+    }
   }
 
   const headers = buildAuthHeaders(creds);
@@ -239,6 +302,7 @@ export async function createGenericPixOrder(
       authType: adapter.auth.type,
       message,
       payload,
+      request: creds.provider === 'monetipag' ? sanitizeInvoiceForLog(body) : undefined,
     });
     throw new GatewayApiError(
       `${message} (HTTP ${response.status})`,

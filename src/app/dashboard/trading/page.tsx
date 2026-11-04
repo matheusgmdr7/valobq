@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { formatBrazilPhone, isValidCpf } from '@/lib/paymentGateways/brDocuments';
 import { 
   Plus, 
   Bell, 
@@ -481,6 +482,13 @@ const TradingPage: React.FC = () => {
   const [depositAmount, setDepositAmount] = useState(20); // Valor do depósito (mínimo R$20)
   const [promoCode, setPromoCode] = useState(''); // Código promocional
   const [cpf, setCpf] = useState(''); // CPF do usuário
+  const [depositPhone, setDepositPhone] = useState('');
+
+  useEffect(() => {
+    if (depositPhone) return;
+    const stored = localStorage.getItem('user_phone') || '';
+    if (stored) setDepositPhone(stored);
+  }, [depositPhone]);
   const [acceptedTerms, setAcceptedTerms] = useState(false); // Aceitar termos
   const [processedDepositIds, setProcessedDepositIds] = useState<Set<string>>(() => {
     // Carregar IDs processados do localStorage para evitar toasts repetidos após reload
@@ -5469,7 +5477,31 @@ const TradingPage: React.FC = () => {
                       placeholder="11 digits"
                       className="w-full px-4 py-3 bg-gray-800/50 border border-white/10 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
                     />
+                    {cpf.length === 11 && !isValidCpf(cpf) && (
+                      <p className="mt-1.5 text-xs text-red-400">CPF inválido. Confira os dígitos.</p>
+                    )}
                   </div>
+
+                  {(selectedGateway?.config?.provider === 'monetipag' ||
+                    String(selectedGateway?.config?.api_base_url || '').includes('monetipag')) && (
+                    <div>
+                      <label className="block text-sm text-white mb-2">Telefone com DDD</label>
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        value={depositPhone}
+                        onChange={(e) => setDepositPhone(e.target.value.replace(/[^\d+\s()-]/g, '').slice(0, 20))}
+                        onFocus={() => {
+                          if (!depositPhone) {
+                            const stored = localStorage.getItem('user_phone') || '';
+                            if (stored) setDepositPhone(stored);
+                          }
+                        }}
+                        placeholder="11999999999"
+                        className="w-full px-4 py-3 bg-gray-800/50 border border-white/10 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
+                      />
+                    </div>
+                  )}
 
                   {/* Checkbox de Termos */}
                   <div className="flex items-start space-x-3">
@@ -5500,8 +5532,8 @@ const TradingPage: React.FC = () => {
                   {/* Botão de Depósito */}
                   <button
                     onClick={async () => {
-                      if (!cpf || cpf.length !== 11) {
-                        toast.error('Por favor, informe um CPF válido (11 dígitos)');
+                      if (!isValidCpf(cpf)) {
+                        toast.error('Por favor, informe um CPF válido');
                         return;
                       }
                       if (!acceptedTerms) {
@@ -5515,6 +5547,13 @@ const TradingPage: React.FC = () => {
                             <p style={{ color: '#fecaca', fontSize: '13px', fontWeight: 500, margin: 0 }}>Erro ao processar depósito. Tente novamente.</p>
                           </div>
                         ), { duration: 3000, position: 'top-right' });
+                        return;
+                      }
+                      const monetipagGateway =
+                        selectedGateway.config?.provider === 'monetipag' ||
+                        String(selectedGateway.config?.api_base_url || '').includes('monetipag');
+                      if (monetipagGateway && !formatBrazilPhone(depositPhone)) {
+                        toast.error('Informe o telefone com DDD para gerar o PIX');
                         return;
                       }
 
@@ -5541,7 +5580,7 @@ const TradingPage: React.FC = () => {
                               user_id: user.id,
                               user_name: user.name.trim(),
                               user_email: user.email,
-                              user_phone: (user as any).phone,
+                              user_phone: depositPhone || (user as any).phone || localStorage.getItem('user_phone') || '',
                               cpf,
                               origin: window.location.origin,
                             }),
@@ -5638,9 +5677,21 @@ const TradingPage: React.FC = () => {
                         ), { duration: 4000, position: 'top-right' });
                       }
                     }}
-                    disabled={!cpf || cpf.length !== 11 || !acceptedTerms}
+                    disabled={
+                      !isValidCpf(cpf) ||
+                      !acceptedTerms ||
+                      ((selectedGateway?.config?.provider === 'monetipag' ||
+                        String(selectedGateway?.config?.api_base_url || '').includes('monetipag')) &&
+                        !formatBrazilPhone(depositPhone))
+                    }
                     className={`w-full py-3.5 sm:py-4 rounded-lg font-medium text-base sm:text-lg transition-all ${
-                      cpf && cpf.length === 11 && acceptedTerms
+                      isValidCpf(cpf) &&
+                      acceptedTerms &&
+                      (!(
+                        selectedGateway?.config?.provider === 'monetipag' ||
+                        String(selectedGateway?.config?.api_base_url || '').includes('monetipag')
+                      ) ||
+                        formatBrazilPhone(depositPhone))
                         ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg'
                         : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                     }`}
