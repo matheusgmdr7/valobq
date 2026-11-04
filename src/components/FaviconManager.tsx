@@ -6,43 +6,25 @@ import { logger } from '@/utils/logger';
 
 export function FaviconManager() {
   useEffect(() => {
-    const loadFaviconFromStorage = async () => {
-      let faviconUrl: string | null = null;
-      
-      // Primeiro, tentar carregar do Supabase (banco de dados)
-      if (supabase) {
-        try {
-          const { data: faviconData } = await supabase
-            .from('platform_settings')
-            .select('value')
-            .eq('key', 'broker_favicon')
-            .single();
-          
-          if (faviconData?.value) {
-            faviconUrl = faviconData.value as string;
-            // Atualizar localStorage para cache
-            localStorage.setItem('broker_favicon', faviconUrl);
-          }
-        } catch (error) {
-          // Fallback para localStorage
-        }
-      }
-      
-      // Se não encontrou no Supabase, usar localStorage
-      if (!faviconUrl) {
-        faviconUrl = localStorage.getItem('broker_favicon');
-      }
-      
-      return faviconUrl;
-    };
-    
     const loadFavicon = async () => {
+      if (!supabase) return;
+
       try {
-        const faviconUrl = await loadFaviconFromStorage();
-        
-        if (faviconUrl) {
-          updateFavicon(faviconUrl);
+        const { data: faviconData } = await supabase
+          .from('platform_settings')
+          .select('value')
+          .eq('key', 'broker_favicon')
+          .maybeSingle();
+
+        const faviconUrl = typeof faviconData?.value === 'string' ? faviconData.value.trim() : '';
+        if (!faviconUrl) {
+          localStorage.removeItem('broker_favicon');
+          document.querySelector("link[rel*='icon']")?.remove();
+          return;
         }
+
+        localStorage.setItem('broker_favicon', faviconUrl);
+        updateFavicon(faviconUrl);
       } catch (error) {
         logger.error('Erro ao carregar favicon:', error);
       }

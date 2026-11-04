@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff, Lock, Shield } from 'lucide-react';
+import { Eye, EyeOff, Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 
@@ -26,7 +26,6 @@ export default function AdminAccessPage() {
         try {
           const parsed = JSON.parse(cached);
           if (parsed.broker_name) setBrokerName(parsed.broker_name);
-          if (parsed.broker_favicon) setFavicon(parsed.broker_favicon);
         } catch { /* ignore */ }
       }
       if (!supabase) return;
@@ -38,7 +37,7 @@ export default function AdminAccessPage() {
       const map: Record<string, string> = {};
       data.forEach((row: { key: string; value: string }) => { map[row.key] = row.value; });
       if (map.broker_name) setBrokerName(map.broker_name);
-      if (map.broker_favicon) setFavicon(map.broker_favicon);
+      setFavicon(map.broker_favicon?.trim() || '');
     };
     loadBrand();
   }, []);
@@ -77,12 +76,8 @@ export default function AdminAccessPage() {
     <div className="min-h-screen bg-[#0a0a0b] text-white flex">
       <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-white/[0.06] bg-[#0a0a0b]">
         <div className="h-14 px-4 flex items-center gap-2.5 border-b border-white/[0.06]">
-          {favicon ? (
+          {favicon && (
             <img src={favicon} alt="" className="w-7 h-7 rounded-md object-contain bg-white/[0.04]" />
-          ) : (
-            <div className="w-7 h-7 rounded-md bg-white/[0.06] flex items-center justify-center">
-              <Shield size={14} className="text-white/50" />
-            </div>
           )}
           <div className="min-w-0">
             <p className="text-[13px] font-medium text-white/90 truncate leading-tight">{brokerName}</p>
@@ -109,12 +104,8 @@ export default function AdminAccessPage() {
       <main className="flex-1 flex items-center justify-center px-5 py-10">
         <div className="w-full max-w-[360px]">
           <div className="md:hidden flex items-center gap-2.5 mb-8">
-            {favicon ? (
+            {favicon && (
               <img src={favicon} alt="" className="w-8 h-8 rounded-md object-contain bg-white/[0.04]" />
-            ) : (
-              <div className="w-8 h-8 rounded-md bg-white/[0.06] flex items-center justify-center">
-                <Shield size={15} className="text-white/50" />
-              </div>
             )}
             <div>
               <p className="text-[14px] font-medium text-white/90 leading-tight">{brokerName}</p>

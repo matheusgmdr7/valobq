@@ -39,15 +39,13 @@ export default function BrokerDataPage() {
         const savedLogo = localStorage.getItem('broker_logo') || null;
         const savedLogoDark = localStorage.getItem('broker_logo_dark') || null;
         const savedLogoLight = localStorage.getItem('broker_logo_light') || null;
-        const savedFavicon = localStorage.getItem('broker_favicon') || null;
-        
         setBrokerData({
           name: savedName,
           supportEmail: savedEmail,
           logo: savedLogo,
           logoDark: savedLogoDark,
           logoLight: savedLogoLight,
-          favicon: savedFavicon,
+          favicon: null,
           watermark: localStorage.getItem('broker_watermark') || null
         });
         setLoading(false);
@@ -114,7 +112,6 @@ export default function BrokerDataPage() {
       const savedLogo = localStorage.getItem('broker_logo') || null;
       const savedLogoDark = localStorage.getItem('broker_logo_dark') || null;
       const savedLogoLight = localStorage.getItem('broker_logo_light') || null;
-      const savedFavicon = localStorage.getItem('broker_favicon') || null;
       const savedWatermark = localStorage.getItem('broker_watermark') || null;
       
       setBrokerData({
@@ -123,7 +120,7 @@ export default function BrokerDataPage() {
         logo: savedLogo,
         logoDark: savedLogoDark,
         logoLight: savedLogoLight,
-        favicon: savedFavicon,
+        favicon: null,
         watermark: savedWatermark
       });
     } finally {
@@ -309,10 +306,7 @@ export default function BrokerDataPage() {
     
     // Se for favicon, remover da página
     if (type === 'favicon') {
-      const link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
-      if (link) {
-        link.href = '/favicon.ico'; // Voltar para o padrão
-      }
+      document.querySelector("link[rel*='icon']")?.remove();
     }
   };
 

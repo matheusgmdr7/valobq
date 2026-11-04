@@ -37,16 +37,20 @@ export const AdminSidebar: React.FC = () => {
           const { data: nameData } = await supabase.from('platform_settings').select('value').eq('key', 'broker_name').single();
           if (nameData?.value) { setBrokerName(nameData.value as string); localStorage.setItem('broker_name', nameData.value as string); }
           else { const s = localStorage.getItem('broker_name'); if (s) setBrokerName(s); }
-          const { data: favData } = await supabase.from('platform_settings').select('value').eq('key', 'broker_favicon').single();
-          if (favData?.value) { setFavicon(favData.value as string); localStorage.setItem('broker_favicon', favData.value as string); }
-          else { const s = localStorage.getItem('broker_favicon'); if (s) setFavicon(s); }
+          const { data: favData } = await supabase.from('platform_settings').select('value').eq('key', 'broker_favicon').maybeSingle();
+          const faviconUrl = typeof favData?.value === 'string' ? favData.value.trim() : '';
+          if (faviconUrl) {
+            setFavicon(faviconUrl);
+            localStorage.setItem('broker_favicon', faviconUrl);
+          } else {
+            setFavicon(null);
+            localStorage.removeItem('broker_favicon');
+          }
         } else {
           const n = localStorage.getItem('broker_name'); if (n) setBrokerName(n);
-          const f = localStorage.getItem('broker_favicon'); if (f) setFavicon(f);
         }
       } catch { 
         const n = localStorage.getItem('broker_name'); if (n) setBrokerName(n);
-        const f = localStorage.getItem('broker_favicon'); if (f) setFavicon(f);
       }
     };
     load();
@@ -84,13 +88,9 @@ export const AdminSidebar: React.FC = () => {
       {/* Logo */}
       <div className="px-5 py-5 border-b border-white/[0.06]">
         <div className="flex items-center gap-2.5">
-          {favicon ? (
+          {favicon && (
             <div className="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0">
               <img src={favicon} alt="" className="w-full h-full object-contain" onError={() => setFavicon(null)} />
-            </div>
-          ) : (
-            <div className="w-7 h-7 bg-white/[0.06] rounded-lg flex items-center justify-center flex-shrink-0">
-              <div className="w-3 h-3 bg-white/20 rounded-sm" />
             </div>
           )}
           <div className="min-w-0">
