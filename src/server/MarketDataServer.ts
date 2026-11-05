@@ -726,6 +726,12 @@ function startServer(): void {
           const price = parseFloat(data.price);
           if (!symbol || !price || !isFinite(price) || price <= 0) return;
 
+          const known = lastRealPrices.get(symbol);
+          if (known && known > 0) {
+            const ratio = price / known;
+            if (ratio > 1.03 || ratio < 0.97) return;
+          }
+
           clientAnchorSync.set(symbol, { price, at: Date.now() });
           lastRealPrices.set(symbol, price);
 
@@ -745,7 +751,6 @@ function startServer(): void {
         } else if (data.type === 'unsubscribe') {
           const subscriptions = clientSubscriptions.get(ws);
           if (subscriptions) subscriptions.delete(data.symbol);
-          klineAggregator.resetSymbol(data.symbol);
         }
       } catch {
         console.error('[MarketDataServer] Erro ao processar mensagem');

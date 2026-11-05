@@ -416,6 +416,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
     }, [activeTrades]);
 
     const symbolRef = useRef(symbol);
+    /** Símbolo dono da série em candlesRef. Evita ancorar o ativo novo no preço do anterior. */
+    const seriesSymbolRef = useRef<string | null>(null);
     useEffect(() => {
       symbolRef.current = symbol;
     }, [symbol]);
@@ -1198,8 +1200,16 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       
       const engine = candleEngineRef.current;
       const finalClose = engine.realPrice > 0 ? engine.realPrice : liveCandleRef.current.close;
-      const trackedHigh = engine.realHigh > 0 ? engine.realHigh : liveCandleRef.current.high;
-      const trackedLow = engine.realLow > 0 ? engine.realLow : liveCandleRef.current.low;
+      const refClose = liveCandleRef.current.close > 0 ? liveCandleRef.current.close : finalClose;
+      const rangeOk = (value: number) =>
+        value > 0 && refClose > 0 && Math.abs(value / refClose - 1) < 0.005;
+      const cryptoSeries = isCryptoAssetRef.current || isCryptoSymbol(symbolRef.current);
+      const trackedHigh = !cryptoSeries && !rangeOk(engine.realHigh)
+        ? liveCandleRef.current.high
+        : engine.realHigh > 0 ? engine.realHigh : liveCandleRef.current.high;
+      const trackedLow = !cryptoSeries && !rangeOk(engine.realLow)
+        ? liveCandleRef.current.low
+        : engine.realLow > 0 ? engine.realLow : liveCandleRef.current.low;
       let high = Math.max(trackedHigh, finalClose, liveCandleRef.current.open);
       let low = Math.min(trackedLow, finalClose, liveCandleRef.current.open);
       if ((isCryptoAssetRef.current || isCryptoSymbol(symbolRef.current)) && finalClose > 0) {
@@ -1605,6 +1615,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         isLoadingRef.current = true;
         historicalDataLoadedRef.current = false;
         liveCandleRef.current = null;
+        seriesSymbolRef.current = null;
         syncChartLoadingState();
       } else {
         isResyncingRef.current = true;
@@ -1739,6 +1750,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       } finally {
         if (isStaleLoad()) return;
 
+        seriesSymbolRef.current = requestedSymbol;
         const last = candlesRef.current[candlesRef.current.length - 1];
         if (last && !isCryptoAssetRef.current && last.close > 0 && !background) {
           syncAnchor(symbol, last.close);
@@ -1847,6 +1859,7 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
         skipSyncAnchorRef.current = false;
         return;
       }
+      if (seriesSymbolRef.current !== symbol) return;
       const last = candlesRef.current[candlesRef.current.length - 1];
       if (last?.close > 0) {
         syncAnchor(symbol, last.close);
@@ -5636,6 +5649,11 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
 
           displayedPriceRef.current = cached.displayedPrice;
           lastProcessedTickRef.current = null;
+          seriesSymbolRef.current = symbol;
+
+          const restoredLast = cached.liveCandle ?? cached.candles[cached.candles.length - 1];
+          engine.realHigh = restoredLast?.high ?? 0;
+          engine.realLow = restoredLast?.low ?? 0;
 
           historicalDataLoadedRef.current = true;
           isLoadingRef.current = false;
@@ -5713,6 +5731,8 @@ export const AnimatedCanvasChart = forwardRef<AnimatedCanvasChartRef, AnimatedCa
       engine.inertia = 0;
       engine.lastTickTime = Date.now();
       engine.lastFrameTime = performance.now();
+      engine.realHigh = 0;
+      engine.realLow = 0;
       
       // Ajustar aceleração e jitter baseado no timeframe atual
       const timeFrameSeconds = getTimeFrameInSeconds(timeframe);

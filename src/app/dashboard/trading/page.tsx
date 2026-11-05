@@ -597,6 +597,49 @@ const TradingPage: React.FC = () => {
     },
     [selectedAsset, currentPrice, realTimePrices],
   );
+
+  /** Soma o resultado ao vivo de todas as operações abertas do ativo. */
+  const summarizeOpenTrades = useCallback(
+    (symbol: string, openTrades: Trade[]) => {
+      const livePrice = getAssetLivePrice(symbol, openTrades[0]?.entryPrice);
+      const payoutRatio =
+        (tradingConfigs.get(symbol)?.payout_percentage ??
+          marketService.getPair(symbol)?.payout ??
+          88) / 100;
+      let total = 0;
+      if (livePrice > 0) {
+        for (const trade of openTrades) {
+          if (livePrice === trade.entryPrice) continue;
+          const isWinning =
+            trade.type === 'call'
+              ? livePrice > trade.entryPrice
+              : livePrice < trade.entryPrice;
+          total += isWinning ? trade.amount * payoutRatio : -trade.amount;
+        }
+      }
+      return {
+        total,
+        isNeutral: !(livePrice > 0) || total === 0,
+        isWinning: total > 0,
+      };
+    },
+    [getAssetLivePrice, tradingConfigs],
+  );
+
+  const getAssetOpenView = (symbol: string) => {
+    const now = Date.now();
+    const openTrades = tradesForCurrentAccount.filter(
+      (trade) => trade.symbol === symbol && !trade.result && trade.expiration > now,
+    );
+    const soonest = openTrades.reduce<Trade | null>(
+      (best, trade) => (!best || trade.expiration < best.expiration ? trade : best),
+      null,
+    );
+    return {
+      soonest,
+      live: openTrades.length > 0 ? summarizeOpenTrades(symbol, openTrades) : null,
+    };
+  };
   
   // Atualizar ref quando activeTools mudar
   useEffect(() => {
@@ -875,10 +918,19 @@ const TradingPage: React.FC = () => {
     }
 
     if (!isDraw && result && showUiForCurrentAccount) {
-      setTradeResults(prev => ({
-        ...prev,
-        [trade.symbol]: { result, profit, timestamp: Date.now() },
-      }));
+      setTradeResults(prev => {
+        const existing = prev[trade.symbol];
+        const stillVisible = existing && Date.now() - existing.timestamp < 30000;
+        const profitSum = (stillVisible ? existing.profit : 0) + profit;
+        return {
+          ...prev,
+          [trade.symbol]: {
+            result: profitSum >= 0 ? 'win' : 'loss',
+            profit: profitSum,
+            timestamp: Date.now(),
+          },
+        };
+      });
     }
 
     if (!isDraw && showUiForCurrentAccount) {
@@ -1907,13 +1959,9 @@ const TradingPage: React.FC = () => {
             {!isMobile && (
             <div className="flex items-center space-x-2 overflow-x-auto overflow-y-visible pb-2 scrollbar-hide">
               {assets.map((asset) => {
-                // Verificar se há trade ativo neste ativo
-                const assetActiveTrade = tradesForCurrentAccount.find(
-                  t => t.symbol === asset.symbol && !t.result && t.expiration > Date.now()
-                );
-                // Verificar se há resultado recente neste ativo
+                const { soonest: assetActiveTrade, live: assetLive } = getAssetOpenView(asset.symbol);
                 const assetResult = tradeResults[asset.symbol];
-                const hasResult = assetResult && (Date.now() - assetResult.timestamp < 30000); // Mostrar por 30s
+                const hasResult = !assetLive && assetResult && (Date.now() - assetResult.timestamp < 30000);
                 
                 return (
                 <div
@@ -1946,35 +1994,25 @@ const TradingPage: React.FC = () => {
                       width: isMobile ? '110px' : '135px',
                       height: isMobile ? '40px' : '47px',
                       padding: isMobile ? '0 6px' : '0 8px',
-                      ...(hasResult ? {
+                      ...(assetLive ? {
+                        background: assetLive.isNeutral
+                          ? 'linear-gradient(to bottom, rgba(59, 130, 246, 0.2) 0%, rgba(17, 24, 39, 0.7) 100%)'
+                          : assetLive.isWinning
+                            ? 'linear-gradient(to bottom, rgba(34, 197, 94, 0.2) 0%, rgba(6, 30, 15, 0.5) 100%)'
+                            : 'linear-gradient(to bottom, rgba(239, 68, 68, 0.2) 0%, rgba(40, 8, 8, 0.5) 100%)',
+                        boxShadow: assetLive.isNeutral
+                          ? '0 2px 8px rgba(59, 130, 246, 0.15)'
+                          : assetLive.isWinning
+                            ? '0 2px 8px rgba(34, 197, 94, 0.15)'
+                            : '0 2px 8px rgba(239, 68, 68, 0.15)',
+                      } : hasResult ? {
                         background: assetResult.result === 'win'
                           ? 'linear-gradient(to bottom, rgba(34, 197, 94, 0.25) 0%, rgba(6, 30, 15, 0.6) 100%)'
                           : 'linear-gradient(to bottom, rgba(239, 68, 68, 0.25) 0%, rgba(40, 8, 8, 0.6) 100%)',
                         boxShadow: assetResult.result === 'win'
                           ? '0 4px 16px rgba(34, 197, 94, 0.2)'
                           : '0 4px 16px rgba(239, 68, 68, 0.2)',
-                      } : assetActiveTrade ? (() => {
-                        const livePrice = getAssetLivePrice(
-                          asset.symbol,
-                          assetActiveTrade.entryPrice,
-                        );
-                        const isWinning = assetActiveTrade.type === 'call' 
-                          ? livePrice > assetActiveTrade.entryPrice 
-                          : livePrice < assetActiveTrade.entryPrice;
-                        const isNeutral = livePrice === assetActiveTrade.entryPrice || livePrice === 0;
-                        return {
-                          background: isNeutral 
-                            ? 'linear-gradient(to bottom, rgba(59, 130, 246, 0.2) 0%, rgba(17, 24, 39, 0.7) 100%)'
-                            : isWinning
-                              ? 'linear-gradient(to bottom, rgba(34, 197, 94, 0.2) 0%, rgba(6, 30, 15, 0.5) 100%)'
-                              : 'linear-gradient(to bottom, rgba(239, 68, 68, 0.2) 0%, rgba(40, 8, 8, 0.5) 100%)',
-                          boxShadow: isNeutral
-                            ? '0 2px 8px rgba(59, 130, 246, 0.15)'
-                            : isWinning
-                              ? '0 2px 8px rgba(34, 197, 94, 0.15)'
-                              : '0 2px 8px rgba(239, 68, 68, 0.15)',
-                        };
-                      })() : {
+                      } : {
                         boxShadow: '0 2px 6px rgba(0, 0, 0, 0.3)',
                       }),
                       borderBottom: selectedAsset === asset.symbol ? '2px solid #3b82f6' : '2px solid transparent'
@@ -2052,37 +2090,23 @@ const TradingPage: React.FC = () => {
                     </div>
                     
                     <div className="text-left flex-1 min-w-0 overflow-hidden">
-                      {/* Se tem resultado finalizado */}
-                      {hasResult ? (
+                      {assetLive ? (
+                        <>
+                          <div className="font-semibold text-[11px] truncate">{asset.symbol}</div>
+                          <div className={`text-[9px] font-bold truncate ${
+                            assetLive.isNeutral ? 'text-gray-400' : assetLive.isWinning ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {assetLive.isNeutral ? 'R$ 0.00' : `${assetLive.total >= 0 ? '+' : '-'}R$ ${Math.abs(assetLive.total).toFixed(2)}`}
+                          </div>
+                        </>
+                      ) : hasResult ? (
                         <>
                           <div className="font-semibold text-[11px] truncate">{asset.symbol}</div>
                           <div className={`text-[9px] font-bold truncate ${assetResult.result === 'win' ? 'text-green-400' : 'text-red-400'}`}>
                             {assetResult.profit >= 0 ? '+' : '-'}R$ {Math.abs(assetResult.profit).toFixed(2)}
                           </div>
                         </>
-                      ) : assetActiveTrade ? (() => {
-                        const livePrice = getAssetLivePrice(
-                          asset.symbol,
-                          assetActiveTrade.entryPrice,
-                        );
-                        const payoutPct = 0.88;
-                        const isWinning = assetActiveTrade.type === 'call' 
-                          ? livePrice > assetActiveTrade.entryPrice 
-                          : livePrice < assetActiveTrade.entryPrice;
-                        const isNeutral = livePrice === assetActiveTrade.entryPrice || livePrice === 0;
-                        const livePnl = isNeutral ? 0 : (isWinning ? assetActiveTrade.amount * payoutPct : -assetActiveTrade.amount);
-                        
-                        return (
-                          <>
-                            <div className="font-semibold text-[11px] truncate">{asset.symbol}</div>
-                            <div className={`text-[9px] font-bold truncate ${
-                              isNeutral ? 'text-gray-400' : isWinning ? 'text-green-400' : 'text-red-400'
-                            }`}>
-                              {isNeutral ? 'R$ 0.00' : `${livePnl >= 0 ? '+' : '-'}R$ ${Math.abs(livePnl).toFixed(2)}`}
-                            </div>
-                          </>
-                        );
-                      })() : (
+                      ) : (
                         <>
                           <div className="font-semibold text-[11px] truncate">{asset.symbol}</div>
                           <div className="text-[8px] opacity-80 truncate">
@@ -2234,11 +2258,9 @@ const TradingPage: React.FC = () => {
         {isMobile && !isLandscape && (
         <div className={`flex items-center space-x-1.5 overflow-x-auto scrollbar-hide ${isLandscape ? 'mt-0.5 pb-0.5' : 'mt-1 pb-1'} px-0.5`}>
           {assets.map((asset) => {
-            const assetActiveTrade = tradesForCurrentAccount.find(
-              t => t.symbol === asset.symbol && !t.result && t.expiration > Date.now()
-            );
+            const { soonest: assetActiveTrade, live: assetLive } = getAssetOpenView(asset.symbol);
             const assetResult = tradeResults[asset.symbol];
-            const hasResult = assetResult && (Date.now() - assetResult.timestamp < 30000);
+            const hasResult = !assetLive && assetResult && (Date.now() - assetResult.timestamp < 30000);
             const imageUrl = asset.imageUrl || getCryptoImageUrl(asset.symbol);
             
             return (
@@ -2258,7 +2280,7 @@ const TradingPage: React.FC = () => {
                     }
                   }}
                   className={`flex items-center gap-1.5 rounded-md cursor-pointer transition-all text-xs ${
-                    hasResult
+                    assetActiveTrade || hasResult
                       ? ''
                       : selectedAsset === asset.symbol
                         ? 'bg-gray-800/80 text-white border border-gray-700/50'
@@ -2267,14 +2289,14 @@ const TradingPage: React.FC = () => {
                   style={{
                     padding: isLandscape ? '2px 6px' : '4px 8px',
                     height: isLandscape ? '24px' : '32px',
-                    ...(hasResult ? {
+                    ...(assetActiveTrade ? {
+                      background: 'linear-gradient(135deg, rgba(59,130,246,0.15), rgba(17,24,39,0.6))',
+                      border: '1px solid rgba(59,130,246,0.2)',
+                    } : hasResult ? {
                       background: assetResult.result === 'win'
                         ? 'linear-gradient(135deg, rgba(34,197,94,0.2), rgba(6,30,15,0.5))'
                         : 'linear-gradient(135deg, rgba(239,68,68,0.2), rgba(40,8,8,0.5))',
                       border: `1px solid ${assetResult.result === 'win' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
-                    } : assetActiveTrade ? {
-                      background: 'linear-gradient(135deg, rgba(59,130,246,0.15), rgba(17,24,39,0.6))',
-                      border: '1px solid rgba(59,130,246,0.2)',
                     } : {}),
                   }}
                 >
@@ -2314,7 +2336,13 @@ const TradingPage: React.FC = () => {
                   {/* Nome + Preço */}
                   <div className="min-w-0">
                     <div className="font-semibold text-[10px] leading-none truncate">{asset.symbol.split('/')[0]}</div>
-                    {hasResult ? (
+                    {assetLive ? (
+                      <div className={`text-[8px] font-bold ${
+                        assetLive.isNeutral ? 'text-gray-400' : assetLive.isWinning ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {assetLive.isNeutral ? 'R$ 0' : `${assetLive.total >= 0 ? '+' : '-'}R$${Math.abs(assetLive.total).toFixed(0)}`}
+                      </div>
+                    ) : hasResult ? (
                       <div className={`text-[8px] font-bold ${assetResult.result === 'win' ? 'text-green-400' : 'text-red-400'}`}>
                         {assetResult.profit >= 0 ? '+' : '-'}R${Math.abs(assetResult.profit).toFixed(0)}
                       </div>
