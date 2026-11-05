@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Search, DollarSign, FileText, X, ArrowUpRight, ArrowDownRight, Clock, RefreshCw, ChevronDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import toast from '@/lib/adminToast';
@@ -90,9 +90,29 @@ export default function UsersPage() {
     setBalanceAdjustment({ ...balanceAdjustment, amount: numericValue, amountDisplay: formatted });
   };
 
+  const requestRef = useRef(0);
+  const loadedOnce = useRef(false);
+
+  const fetchAdmin = async (path: string) => {
+    if (!supabase) throw new Error('Banco de dados não configurado');
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error('Sessão expirada. Entre novamente.');
+    const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Erro ao carregar usuários');
+    return json as { users?: User[] };
+  };
+
   useEffect(() => {
-    loadUsers();
     loadClosureRequests();
+  }, []);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      loadUsers(searchQuery);
+    }, searchQuery ? 300 : 0);
+    return () => clearTimeout(handle);
   }, [searchQuery]);
 
   const loadClosureRequests = async () => {
@@ -104,19 +124,21 @@ export default function UsersPage() {
     } catch (error) { console.error('Erro ao carregar solicitações:', error); }
   };
 
-  const loadUsers = async () => {
-    setLoading(true);
+  const loadUsers = async (query: string) => {
+    const requestId = ++requestRef.current;
+    if (!loadedOnce.current) setLoading(true);
     try {
-      if (!supabase) { setUsers([]); return; }
-      let query = supabase.from('users').select('*').order('created_at', { ascending: false }).limit(100);
-      if (searchQuery) query = query.or(`email.ilike.%${searchQuery}%,name.ilike.%${searchQuery}%,id.eq.${searchQuery}`);
-      const { data, error } = await query;
-      if (error) throw error;
-      setUsers(data || []);
+      const json = await fetchAdmin(`/api/admin/users?q=${encodeURIComponent(query.trim())}`);
+      if (requestId !== requestRef.current) return;
+      setUsers(json.users || []);
+      loadedOnce.current = true;
     } catch (error) {
       console.error('Erro ao carregar usuários:', error);
-      toast.error('Erro ao carregar usuários');
-    } finally { setLoading(false); }
+      if (requestId !== requestRef.current) return;
+      toast.error(error instanceof Error ? error.message : 'Erro ao carregar usuários');
+    } finally {
+      if (requestId === requestRef.current) setLoading(false);
+    }
   };
 
   const loadUserHistory = async (userId: string) => {
@@ -169,7 +191,7 @@ export default function UsersPage() {
       toast.success('Saldo ajustado com sucesso!');
       setShowBalanceModal(false);
       setBalanceAdjustment({ amount: 0, amountDisplay: '', type: 'credit', reason: '' });
-      loadUsers();
+      loadUsers(searchQuery);
     } catch (error: any) {
       console.error('Erro ao ajustar saldo:', error);
       toast.error(error.message || 'Erro ao ajustar saldo');
@@ -225,7 +247,7 @@ export default function UsersPage() {
             <h1 className="text-base font-semibold text-white/90">Gestão de Usuários</h1>
             <p className="text-[11px] text-white/30 mt-0.5">Gerencie contas, saldos e KYC</p>
           </div>
-          <button onClick={() => loadUsers()} className="p-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-all">
+          <button onClick={() => loadUsers(searchQuery)} className="p-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-all">
             <RefreshCw className="w-3.5 h-3.5 text-white/40" />
           </button>
         </div>

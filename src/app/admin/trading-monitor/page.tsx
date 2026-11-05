@@ -36,97 +36,85 @@ export default function TradingMonitorPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [historyPage, setHistoryPage] = useState(0);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const timeUpdateRef = useRef<NodeJS.Timeout | null>(null);
+  const historyPageRef = useRef(0);
   const HISTORY_PAGE_SIZE = 50;
 
-  useEffect(() => {
-    loadActiveTrades();
-    if (autoRefresh) {
-      intervalRef.current = setInterval(loadActiveTrades, 2000);
+  const fetchAdmin = async (path: string) => {
+    if (!supabase) throw new Error('Banco de dados não configurado');
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error('Sessão expirada. Entre novamente.');
+    const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Erro ao carregar operações');
+    return json as { trades?: ActiveTrade[] };
+  };
+
+  const loadActiveTrades = async (silent = false) => {
+    try {
+      const json = await fetchAdmin('/api/admin/trades?scope=active');
+      const nowMs = Date.now();
+      const filtered = (json.trades || []).filter((trade) => getExpirationTimestamp(trade) > nowMs);
+      setActiveTrades(filtered);
+    } catch (error) {
+      console.error('Erro ao carregar trades ativos:', error);
+      if (!silent) toast.error(error instanceof Error ? error.message : 'Erro ao carregar trades');
+    } finally {
+      setLoading(false);
     }
-    timeUpdateRef.current = setInterval(() => {
-      setActiveTrades(prev => {
-        const now = Date.now();
-        return prev.filter(t => getExpirationTimestamp(t) > now);
-      });
+  };
+
+  const loadHistory = async (page: number, silent = false) => {
+    if (!silent) setHistoryLoading(true);
+    try {
+      const json = await fetchAdmin(`/api/admin/trades?scope=history&page=${page}`);
+      const trades = json.trades || [];
+      setHistoryTrades(trades);
+      setHasMoreHistory(trades.length === HISTORY_PAGE_SIZE);
+      setHistoryPage(page);
+      historyPageRef.current = page;
+    } catch (error) {
+      console.error('Erro ao carregar histórico:', error);
+      if (!silent) {
+        toast.error(error instanceof Error ? error.message : 'Erro ao carregar histórico');
+        setHistoryTrades([]);
+      }
+    } finally {
+      if (!silent) setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      if (!cancelled) loadActiveTrades(true);
+    };
+
+    tick();
+    const poll = autoRefresh ? setInterval(tick, 2000) : null;
+    const clock = setInterval(() => {
+      setActiveTrades((prev) => prev.filter((trade) => getExpirationTimestamp(trade) > Date.now()));
     }, 1000);
+
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (timeUpdateRef.current) clearInterval(timeUpdateRef.current);
+      cancelled = true;
+      if (poll) clearInterval(poll);
+      clearInterval(clock);
     };
   }, [autoRefresh]);
 
   useEffect(() => {
-    if (activeTab === 'history' && historyTrades.length === 0) {
-      loadHistory(0);
-    }
+    if (activeTab !== 'history') return;
+    let cancelled = false;
+    loadHistory(historyPageRef.current, historyTrades.length > 0);
+    const poll = setInterval(() => {
+      if (!cancelled) loadHistory(historyPageRef.current, true);
+    }, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+    };
   }, [activeTab]);
-
-  const loadActiveTrades = async () => {
-    try {
-      if (!supabase) { setActiveTrades([]); setLoading(false); return; }
-
-      const now = new Date();
-      const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
-
-      const { data, error } = await supabase
-        .from('trades')
-        .select('*, user:users!trades_user_id_fkey(id, name, email)')
-        .is('exit_price', null)
-        .is('result', null)
-        .gte('created_at', fiveMinAgo)
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (error) {
-        if (error.code === '42P01' || error.message?.includes('does not exist')) { setActiveTrades([]); setLoading(false); return; }
-        throw error;
-      }
-
-      const nowMs = Date.now();
-      const filtered = (data || []).filter((trade: any) => {
-        const expTs = getExpirationTimestamp(trade);
-        return expTs > nowMs;
-      });
-      setActiveTrades(filtered as ActiveTrade[]);
-      setLoading(false);
-    } catch (error: any) {
-      console.error('Erro ao carregar trades ativos:', error);
-      if (error?.code !== '42P01' && !error?.message?.includes('does not exist')) toast.error('Erro ao carregar trades');
-      setActiveTrades([]);
-      setLoading(false);
-    }
-  };
-
-  const loadHistory = async (page: number) => {
-    setHistoryLoading(true);
-    try {
-      if (!supabase) { setHistoryTrades([]); setHistoryLoading(false); return; }
-
-      const { data, error } = await supabase
-        .from('trades')
-        .select('*, user:users!trades_user_id_fkey(id, name, email)')
-        .not('result', 'is', null)
-        .order('created_at', { ascending: false })
-        .range(page * HISTORY_PAGE_SIZE, (page + 1) * HISTORY_PAGE_SIZE - 1);
-
-      if (error) {
-        if (error.code === '42P01' || error.message?.includes('does not exist')) { setHistoryTrades([]); setHistoryLoading(false); return; }
-        throw error;
-      }
-
-      setHistoryTrades(data as ActiveTrade[] || []);
-      setHasMoreHistory((data || []).length === HISTORY_PAGE_SIZE);
-      setHistoryPage(page);
-      setHistoryLoading(false);
-    } catch (error: any) {
-      console.error('Erro ao carregar histórico:', error);
-      toast.error('Erro ao carregar histórico');
-      setHistoryTrades([]);
-      setHistoryLoading(false);
-    }
-  };
 
   const stats = {
     total: activeTrades.length,

@@ -129,29 +129,15 @@ export default function AdminPage() {
   const loadLiveTrades = async () => {
     try {
       if (!supabase) return;
-      const now = new Date();
-      const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
-
-      const { data } = await supabase
-        .from('trades')
-        .select('expiration, created_at')
-        .is('exit_price', null)
-        .is('result', null)
-        .gte('created_at', fiveMinAgo);
-
-      if (!data) { setLiveTradesCount(0); return; }
-
-      const nowMs = now.getTime();
-      const active = data.filter(t => {
-        const exp = t.expiration;
-        let expMs: number;
-        if (exp > 1_000_000_000_000) expMs = exp;
-        else if (exp > 1_000_000_000) expMs = exp * 1000;
-        else expMs = new Date(t.created_at).getTime() + exp * 1000;
-        return expMs > nowMs;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) { setLiveTradesCount(0); return; }
+      const res = await fetch('/api/admin/trades?scope=active', {
+        headers: { Authorization: `Bearer ${token}` },
       });
-
-      setLiveTradesCount(active.length);
+      if (!res.ok) return;
+      const json = await res.json();
+      setLiveTradesCount(Array.isArray(json.trades) ? json.trades.length : 0);
     } catch {
       // silently fail
     }
@@ -163,83 +149,52 @@ export default function AdminPage() {
       if (!supabase) { setLoading(false); return; }
 
       const dateFrom = getDateFrom(period);
+      const chartDays = period === 'all' ? 30 : parseInt(period, 10);
+      const chartFrom = dateFrom || new Date(Date.now() - 30 * 86400000).toISOString();
+      const params = new URLSearchParams({ chartFrom });
+      if (dateFrom) params.set('from', dateFrom);
 
-      // Total de usuários (sem filtro de período)
-      const { count: totalUsers } = await supabase
-        .from('users').select('*', { count: 'exact', head: true });
-
-      // Novos usuários no período
-      let newUsersQuery = supabase.from('users').select('*', { count: 'exact', head: true });
-      if (dateFrom) newUsersQuery = newUsersQuery.gte('created_at', dateFrom);
-      const { count: newUsers } = await newUsersQuery;
-
-      const financeParams = new URLSearchParams({ status: 'all', method: 'all' });
-      if (dateFrom) financeParams.set('from', dateFrom);
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
-      let finance: { summary?: Record<string, number>; deposits?: any[]; withdrawals?: any[] } | null = null;
-      if (token) {
-        const financeRes = await fetch(`/api/admin/finance?${financeParams.toString()}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (financeRes.ok) finance = await financeRes.json();
-      }
-      const summary = finance?.summary;
+      if (!token) return;
+
+      const res = await fetch(`/api/admin/dashboard?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      const summary = json.stats || {};
 
       setStats({
-        totalUsers: totalUsers || 0,
-        newUsers: newUsers || 0,
+        totalUsers: summary.totalUsers || 0,
+        newUsers: summary.newUsers || 0,
         activeTrades: 0,
-        totalDeposits: summary?.totalDeposits || 0,
-        totalWithdrawals: summary?.totalWithdrawals || 0,
-        depositCount: summary?.depositCount || 0,
-        withdrawalCount: summary?.withdrawalCount || 0,
-        pendingDeposits: summary?.pendingDeposits || 0,
-        pendingWithdrawals: summary?.pendingWithdrawals || 0,
+        totalDeposits: summary.totalDeposits || 0,
+        totalWithdrawals: summary.totalWithdrawals || 0,
+        depositCount: summary.depositCount || 0,
+        withdrawalCount: summary.withdrawalCount || 0,
+        pendingDeposits: summary.pendingDeposits || 0,
+        pendingWithdrawals: summary.pendingWithdrawals || 0,
       });
 
-      // Gráfico de novos usuários (últimos N dias)
-      await loadNewUsersChart(dateFrom);
-      setRecentActivity(buildRecentActivity(finance?.deposits || [], finance?.withdrawals || []));
+      const grouped: Record<string, number> = {};
+      for (let i = 0; i < chartDays; i++) {
+        const day = new Date();
+        day.setDate(day.getDate() - (chartDays - 1 - i));
+        grouped[day.toISOString().slice(0, 10)] = 0;
+      }
+      (json.userCreatedAt || []).forEach((createdAt: string) => {
+        const key = new Date(createdAt).toISOString().slice(0, 10);
+        if (grouped[key] !== undefined) grouped[key]++;
+      });
+      setNewUsersChart(Object.entries(grouped).map(([date, count]) => ({ date, count })));
+      setRecentActivity(buildRecentActivity(json.deposits || [], json.withdrawals || []));
     } catch (error: any) {
       console.error('Erro ao carregar estatísticas:', error);
     } finally {
       setLoading(false);
     }
   }, [period]);
-
-  const loadNewUsersChart = async (dateFrom: string | null) => {
-    try {
-      if (!supabase) return;
-      const days = period === 'all' ? 30 : parseInt(period);
-      const from = dateFrom || new Date(Date.now() - 30 * 86400000).toISOString();
-
-      const { data } = await supabase
-        .from('users')
-        .select('created_at')
-        .gte('created_at', from)
-        .order('created_at', { ascending: true });
-
-      if (!data) { setNewUsersChart([]); return; }
-
-      const grouped: Record<string, number> = {};
-      for (let i = 0; i < days; i++) {
-        const d = new Date();
-        d.setDate(d.getDate() - (days - 1 - i));
-        const key = d.toISOString().slice(0, 10);
-        grouped[key] = 0;
-      }
-      data.forEach((u: any) => {
-        const key = new Date(u.created_at).toISOString().slice(0, 10);
-        if (grouped[key] !== undefined) grouped[key]++;
-      });
-
-      setNewUsersChart(Object.entries(grouped).map(([date, count]) => ({ date, count })));
-    } catch (error) {
-      console.error('Erro ao carregar gráfico:', error);
-    }
-  };
-
 
   const maxChartValue = Math.max(...newUsersChart.map(d => d.count), 1);
 
